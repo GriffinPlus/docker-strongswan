@@ -1,3 +1,3 @@
 #!/bin/bash
 
-docker build -t cloudycube/openswan .
+docker build -t cloudycube/strongswan .

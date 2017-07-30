@@ -5,5 +5,5 @@
 
 docker run -it \
     --env STARTUP_VERBOSITY=4 \
-    cloudycube/openswan \
+    cloudycube/strongswan \
     run-and-enter

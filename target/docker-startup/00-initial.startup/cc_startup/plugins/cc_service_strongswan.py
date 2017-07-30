@@ -1,5 +1,5 @@
 """
-This module contains everything needed to configure 'openswan'.
+This module contains everything needed to configure 'strongswan'.
 Author: Sascha Falk <sascha@falk-online.eu>
 License: MIT License
 """
@@ -23,20 +23,20 @@ CONFIGURATION_FILE_PATH = 'TODO'
 
 
 # name of the service
-service_name = 'openswan'
+service_name = 'strongswan'
 
 # determines whether the service is run by the startup script
 enabled = True
 
 def get_service():
     "Returns an instance of the service provided by the service plugin."
-    return Openswan()
+    return StrongSwan()
 
 
 # ---------------------------------------------------------------------------------------------------------------------
 
 
-class Openswan(Service):
+class StrongSwan(Service):
 
     def prepare(self):
         """

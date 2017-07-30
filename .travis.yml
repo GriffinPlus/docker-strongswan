@@ -1,0 +1,22 @@
+sudo: required
+
+language: python
+
+python:
+  - "3.5"
+
+services:
+  - docker
+
+before_install:
+  - docker build -t cloudycube/strongswan .
+
+install:
+  - pip3 install -r tests/requirements.txt
+
+script:
+  - cd tests
+  - docker-compose -f docker-compose.default.yml up -d
+  - sleep 30
+  - nose2
+  - docker-compose -f docker-compose.default.yml down

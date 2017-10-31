@@ -19,4 +19,16 @@ This image belongs to a set of Docker images created for project [CloudyCube](ht
 
 ### Environment Variables
 
-#### TODO
+#### USE_INTERNAL_CA
+
+Determines whether to use the internal Certificate Authority (CA) for creating a certificate for the VPN server and its clients.
+
+Valid Values: `true`, `false`, `1`, `0`
+
+Default Value: `true`
+
+#### VPN_HOSTNAME
+
+Fully qualified hostname of the VPN server. The internal Certificate Authority will create a server certificate for that hostname telling clients that they are connected to the desired VPN server.
+
+Default Value: *hostname of the container*

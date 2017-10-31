@@ -23,7 +23,8 @@ This image belongs to a set of Docker images created for project [CloudyCube](ht
 
 Determines whether to use the internal Certificate Authority (CA) for creating a certificate for the VPN server and its clients.
 
-Valid Values: `true`, `false`, `1`, `0`
+- `true`, `1` => The internal Certificate Authority is used (see [here](#internal-certificate-authority) for additional information)
+- `false`, `0` => An external Certificate Authority is used (see [here](#external-certificate-authority) for additional information).
 
 Default Value: `true`
 
@@ -32,3 +33,19 @@ Default Value: `true`
 Fully qualified hostname of the VPN server. The internal Certificate Authority will create a server certificate for that hostname telling clients that they are connected to the desired VPN server.
 
 Default Value: *hostname of the container*
+
+### Certificate Authorities
+
+The Certificate Authority (CA) is the anchor of trust in your Public Key Infrastructure (PKI). Everyone dealing with the VPN Server must trust it. This is usually done by importing the CA certificate as a trusted Root CA in any devices taking part.
+
+The CA is responsible for issuing a certificate for the VPN server and its clients. Anyone in the PKI trusts the CA, so the CA is able to issue additional certificates everyone trusting the CA will trust as well. Clients that trust the CA will know that the VPN server they are talking to is authentic. The VPN server will recognize clients that authenticate using a client certificate that was issued by the trusted CA.
+
+This container assists to establish a PKI in your environment, if you do not have it, yet. The internal CA is the ideal fit, if you want to get the VPN server up and running as fast and easy as possible. Optionally the container can be configured to use an external CA. This approach is something for people that either have an already running PKI or simply want to take direct control of security related operations.
+
+#### Internal Certificate Authority
+
+TODO
+
+#### External Certificate Authority
+
+TODO

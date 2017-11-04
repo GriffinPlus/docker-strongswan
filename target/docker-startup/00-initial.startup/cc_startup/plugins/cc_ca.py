@@ -7,9 +7,7 @@ License: MIT License
 import os
 
 from OpenSSL import crypto, SSL
-from socket import gethostname
 from stat import S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP, S_IROTH, S_IWOTH
-from ..cc_helpers import read_text_file, write_text_file, replace_php_define, replace_php_variable, generate_password, get_env_setting_bool, get_env_setting_integer, get_env_setting_string
 from ..cc_log import Log
 
 
@@ -29,8 +27,16 @@ class CertificateAuthority:
     # -------------------------------------------------------------------------------------------
 
     def init_ca(self, need_key):
+        """
+        Initializes the CA loading/creating any related data.
+        
+        Args:
+            need_key (bool): True, if the caller needs the private key of the CA for its operation;
+                             False, if the caller only needs the public key of the CA for its operation.
+        """
 
         # create directories where the key/certificate of the CA are stored, if necessary
+        # ---------------------------------------------------------------------
         os.makedirs(os.path.dirname(self._ca_cert_path), exist_ok = True);
         os.makedirs(os.path.dirname(self._ca_key_path),  exist_ok = True);
 
@@ -97,7 +103,26 @@ class CertificateAuthority:
 
     def get_vpn_server_data(self, vpn_hostnames):
         """
-        
+        Gets the key/certificate and related data of the VPN server, creates the certificate, if necessary.
+
+        Args:
+            vpn_hostnames (tuple,list): Hostnames and IP addresses the VPN server will be reachable via.
+                                        Please prefix hostnames with 'DNS:' and IP addresses with 'IP:'
+                                        The first hostname/IP address in the list is put into the Common Name(CN) of the certificate.
+                                        All hostnames/IP addresses are put into the X.509 'subjectAltName' extension.
+
+        Returns:
+            A dictionary containing data about the key/certificate of the VPN server.
+            The dictionary contains the following data:
+            - 'key'                 (obj)  : OpenSSL key object
+            - 'key path'            (str)  : Full path of the key file on disk
+            - 'key created'         (bool) : True, if the key was created;
+                                             False, if the existing key was loaded
+            - 'certificate'         (obj)  : OpenSSL certificate object
+            - 'certificate path'    (str)  : Full path of the certificate file on disk
+            - 'certificate created' (bool) : True, if the certificate was created;
+                                             False, if the existing certificate was loaded
+            
         """
 
         server_cert_path = os.path.join(self._base_dir, "certs",   "server-cert.pem")
@@ -169,7 +194,7 @@ class CertificateAuthority:
             server_cert.get_subject().L  = "Berlin"
             server_cert.get_subject().O  = "CloudyCube"
             server_cert.get_subject().OU = "VPN Provider"
-            server_cert.get_subject().CN = vpn_hostnames[0]    # TODO: Add all hostnames
+            server_cert.get_subject().CN = ":".join(vpn_hostnames[0].split(":")[1:]) # strips the "DNS:" or "IP:" prefix
             server_cert.set_serial_number(1)
             server_cert.gmtime_adj_notBefore(0)
             server_cert.gmtime_adj_notAfter(10*365*24*60*60)
@@ -184,6 +209,10 @@ class CertificateAuthority:
                 # keyUsage
                 # -------------------------------------------------------------------------------------
                 crypto.X509Extension(b'keyUsage', False, b'digitalSignature, nonRepudiation, keyEncipherment, keyAgreement'),
+
+                # subjectAltName
+                # -------------------------------------------------------------------------------------
+                crypto.X509Extension(b"subjectAltName", False, ", ".join(vpn_hostnames).encode()),
 
                 # extendedKeyUsage
                 # -------------------------------------------------------------------------------------
@@ -210,7 +239,11 @@ class CertificateAuthority:
 
     # -------------------------------------------------------------------------------------------
 
-    def get_server_certificate(self):
+    def get_client_data(self, identity):
         """
+
         """
-        pass
+
+        return {
+
+        }

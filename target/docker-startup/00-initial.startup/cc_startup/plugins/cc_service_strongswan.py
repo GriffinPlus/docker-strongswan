@@ -127,7 +127,9 @@ class StrongSwan(Service):
         ca = CertificateAuthority(INTERNAL_PKI_BASE_DIR)
 
         # get the key/certificate of the VPN server (create it, if necessary)
-        vpn_server_data = ca.get_vpn_server_data((self._vpn_hostname, ))
+        sans = []
+        sans.append("DNS:" + self._vpn_hostname)
+        vpn_server_data = ca.get_vpn_server_data(sans)
         self._server_key = vpn_server_data["key"]
         self._server_key_path = vpn_server_data["key path"]
         self._server_cert = vpn_server_data["certificate"]

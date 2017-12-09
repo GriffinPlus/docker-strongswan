@@ -5,6 +5,7 @@ License: MIT License
 """
 
 import os
+import datetime
 
 from OpenSSL import crypto, SSL
 from stat import S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP, S_IROTH, S_IWOTH
@@ -13,16 +14,19 @@ from ..cc_log import Log
 
 # ---------------------------------------------------------------------------------------------------------------------
 
+CA_BASE_DIR = "/data/internal_ca"
+
+# ---------------------------------------------------------------------------------------------------------------------
 
 class CertificateAuthority:
 
     # -------------------------------------------------------------------------------------------
 
-    def __init__(self, base_dir):
+    def __init__(self):
 
-        self._base_dir     = base_dir
-        self._ca_cert_path = os.path.join(base_dir, "certs",   "ca-cert.pem")
-        self._ca_key_path  = os.path.join(base_dir, "private", "ca-key.pem")
+        self._base_dir     = CA_BASE_DIR
+        self._ca_cert_path = os.path.join(self._base_dir, "ca-cert.pem")
+        self._ca_key_path  = os.path.join(self._base_dir, "ca-key.pem")
 
     # -------------------------------------------------------------------------------------------
 
@@ -106,10 +110,10 @@ class CertificateAuthority:
         Gets the key/certificate and related data of the VPN server, creates the certificate, if necessary.
 
         Args:
-            vpn_hostnames (tuple,list): Hostnames and IP addresses the VPN server will be reachable via.
-                                        Please prefix hostnames with 'DNS:' and IP addresses with 'IP:'
-                                        The first hostname/IP address in the list is put into the Common Name(CN) of the certificate.
-                                        All hostnames/IP addresses are put into the X.509 'subjectAltName' extension.
+            vpn_hostnames (list): Hostnames and IP addresses the VPN server will be reachable via.
+                                  Please prefix hostnames with 'DNS:' and IP addresses with 'IP:'
+                                  The first hostname/IP address in the list is put into the Common Name(CN) of the certificate.
+                                  All hostnames/IP addresses are put into the X.509 'subjectAltName' extension.
 
         Returns:
             A dictionary containing data about the key/certificate of the VPN server.
@@ -125,8 +129,13 @@ class CertificateAuthority:
             
         """
 
-        server_cert_path = os.path.join(self._base_dir, "certs",   "server-cert.pem")
-        server_key_path  = os.path.join(self._base_dir, "private", "server-key.pem")
+        server_cert_path = os.path.join(self._base_dir, "server", "cert.pem")
+        server_key_path  = os.path.join(self._base_dir, "server", "key.pem")
+
+        # create directories where the key/certificate is stored, if necessary
+        # ---------------------------------------------------------------------
+        os.makedirs(os.path.dirname(server_cert_path), exist_ok = True);
+        os.makedirs(os.path.dirname(server_key_path),  exist_ok = True);
 
         # check server key
         # -----------------------------------------------------------------------------------------
@@ -144,28 +153,49 @@ class CertificateAuthority:
         create_server_cert = False
         if create_server_key:
 
-           if os.path.exists(server_cert_path):
-
-               Log.write_note("Loading certificate of the VPN server ({0})...".format(server_cert_path))
-               with open(server_cert_path, "rt") as f: cert = f.read()
-               server_cert = crypto.load_certificate(crypto.FILETYPE_PEM, cert)
-
-               # check whether the hostname is correct
-               # TODO: check multiple hostnames/IPs in SANs
-               cert_hostname = server_cert.get_subject().CN
-               if vpn_hostnames[0] != cert_hostname:
-                   Log.write_warning("The certificate was made for '{0}', but the '{1}' is currently configured.".format(cert_hostname, vpn_hostname))
-                   Log.write_warning("Fixing this automatically by regenerating the server certificate.")
-                   create_server_cert = True
-
-           else:
-                Log.write_note("The certificate of the VPN server ({0}) does not exist.".format(server_cert_path))
-                create_server_cert = True
-
-        else:
             Log.write_note("The key is generated, so the certificate of the VPN server ({0}) needs to be generated as well.".format(server_cert_path))
             create_server_cert = True
 
+        else:
+
+            if os.path.exists(server_cert_path):
+
+                Log.write_note("Loading certificate of the VPN server ({0})...".format(server_cert_path))
+                with open(server_cert_path, "rt") as f: cert = f.read()
+                server_cert = crypto.load_certificate(crypto.FILETYPE_PEM, cert)
+
+                # check CN in certificate
+                # ---------------------------------------------------------------------------------------------
+                cert_hostname = server_cert.get_subject().CN
+                expected_hostname = ":".join(vpn_hostnames[0].split(":")[1:])
+                if cert_hostname != expected_hostname:
+                    Log.write_warning("The certificate was made for '{0}', but '{1}' is currently configured.".format(cert_hostname, expected_hostname))
+                    Log.write_warning("Fixing this automatically by regenerating the server certificate.")
+                    create_server_cert = True
+
+                # check subjectAltName extension
+                # ---------------------------------------------------------------------------------------------
+                if not create_server_cert:
+                    foundSubjectAltNameExtension = False
+                    for cert_extension_index in range(0, server_cert.get_extension_count()):
+                        extension = server_cert.get_extension(cert_extension_index)
+                        if extension.get_short_name() == b'subjectAltName':
+                            cert_subjects = str(extension)
+                            expected_subjects = ", ".join(vpn_hostnames)
+                            if cert_subjects != expected_subjects:
+                                Log.write_warning("Found extension 'subjectAltName', but it is '{0}', should be '{1}'.".format(cert_subjects, expected_subjects))
+                                create_server_cert = True
+                            foundSubjectAltNameExtension = True
+                            break
+                    if not foundSubjectAltNameExtension:
+                        Log.write_note("The certificate does not contain a 'subjectAltName' extension.".format(server_cert_path))
+                        Log.write_warning("Fixing this automatically by regenerating the server certificate.")
+                        create_server_cert = True
+
+            else:
+
+                Log.write_note("The certificate of the VPN server ({0}) does not exist.".format(server_cert_path))
+                create_server_cert = True
 
         # initialize the CA, if a new certificate is about to be created
         # ---------------------------------------------------------------------
@@ -239,11 +269,94 @@ class CertificateAuthority:
 
     # -------------------------------------------------------------------------------------------
 
-    def get_client_data(self, identity):
+    def create_vpn_client_data(self, identity, password):
+        """
+        Creates a new key/certificate for a VPN client that should be able to connect to the VPN server.
+
+        Args:
+            identity (str) : Identity of the client (must be an e-mail address).
+            password (str) : Password to protect the generated PKCS12 archive
+
+        Returns:
+            A dictionary containing data about the key/certificate of the VPN client.
+            The dictionary contains the following data:
+            - 'key'                   (obj)  : OpenSSL 'PKey' object representing the private key of the client
+            - 'certificate'           (obj)  : OpenSSL 'X509' object representing the certificate of the client
+            - 'certificate path'      (str)  : Full path of the certificate file on disk
+            - 'pkcs12 archive'        (obj)  : OpenSSL 'PKCS12' object
+            
         """
 
-        """
+        timestamp = "{:%Y-%m-%d %H-%M-%S}".format(datetime.datetime.utcnow())
+        client_cert_path = os.path.join(self._base_dir, "clients", timestamp + " - " + identity + ".pem")
+
+        # create directory where generated client certificates are stored, if necessary
+        # -----------------------------------------------------------------------------------------
+        os.makedirs(os.path.dirname(client_cert_path), exist_ok = True);
+
+        # initialize the CA
+        # ---------------------------------------------------------------------
+        self.init_ca(True)
+
+        # create the client key
+        # ---------------------------------------------------------------------
+        client_key = crypto.PKey()
+        client_key.generate_key(crypto.TYPE_RSA, 4096)
+
+        # create the client certificate
+        # ---------------------------------------------------------------------
+        client_cert = crypto.X509()
+        client_cert.get_subject().C  = "DE"
+        client_cert.get_subject().ST = "Berlin"
+        client_cert.get_subject().L  = "Berlin"
+        client_cert.get_subject().O  = "CloudyCube"
+        client_cert.get_subject().OU = "VPN Client"
+        client_cert.get_subject().CN = identity
+        client_cert.set_serial_number(1)
+        client_cert.gmtime_adj_notBefore(0)
+        client_cert.gmtime_adj_notAfter(2*365*24*60*60)
+        client_cert.set_issuer(self._ca_cert.get_subject())
+        client_cert.set_pubkey(client_key)
+        client_cert.add_extensions(
+        [
+            # basicConstraints
+            # -------------------------------------------------------------------------------------
+            crypto.X509Extension(b'basicConstraints', False, b'CA:FALSE'),
+
+            # keyUsage
+            # -------------------------------------------------------------------------------------
+            crypto.X509Extension(b'keyUsage', False, b'digitalSignature, nonRepudiation, keyEncipherment, keyAgreement'),
+
+            # subjectAltName
+            # -------------------------------------------------------------------------------------
+            crypto.X509Extension(b"subjectAltName", False, ("email:" + identity).encode()),
+
+            # extendedKeyUsage
+            # -------------------------------------------------------------------------------------
+            # ikeIntermediate (1.3.6.1.5.5.8.2.2) is required OS X 10.7.3 or older
+            # -------------------------------------------------------------------------------------
+            crypto.X509Extension(b'extendedKeyUsage', False, b'clientAuth, 1.3.6.1.5.5.8.2.2')
+        ])
+        client_cert.sign(self._ca_key, "sha256")
+        with open(client_cert_path, "wb") as f:
+            f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, client_cert))
+        os.chown(client_cert_path, 0, 0)
+        os.chmod(client_cert_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
+        Log.write_note("The certificate of the VPN client ({0}) was generated successfully.".format(identity))
+
+        # create a PKCS12 package containing everything the client needs to log in
+        # -----------------------------------------------------------------------------------------
+        pfx = crypto.PKCS12Type()
+        pfx.set_ca_certificates([self._ca_cert])
+        pfx.set_privatekey(client_key)
+        pfx.set_certificate(client_cert)
+        pfxdata = pfx.export(password)
+        with open(client_cert_path + ".pfx", "wb") as f:
+            f.write(pfxdata)
 
         return {
-
+            "key"               : client_key,
+            "certificate"       : client_cert,
+            "certificate path"  : client_cert_path,
+            "pkcs12 archive"    : pfx
         }

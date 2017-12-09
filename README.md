@@ -28,9 +28,9 @@ Determines whether to use the internal Certificate Authority (CA) for creating a
 
 Default Value: `true`
 
-#### VPN_HOSTNAME
+#### VPN_HOSTNAMES
 
-Fully qualified hostname of the VPN server. The internal Certificate Authority will create a server certificate for that hostname telling clients that they are connected to the desired VPN server.
+Fully qualified hostnames of the VPN server. The internal Certificate Authority will create a server certificate for these hostname telling clients that they are connected to the desired VPN server. Multiple hostnames must be comma-separated.
 
 Default Value: *hostname of the container*
 

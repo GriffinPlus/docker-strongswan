@@ -5,10 +5,11 @@ License: MIT License
 """
 
 import os
+from OpenSSL import crypto, SSL
 
 from ..cc_log import Log
 from ..cc_cmdproc import CommandProcessor
-
+from .cc_ca import CertificateAuthority
 
 # ---------------------------------------------------------------------------------------------------------------------
 
@@ -27,7 +28,18 @@ def get_processor():
 # ---------------------------------------------------------------------------------------------------------------------
 
 
+# line used to separate blocks of information in the log
+SEPARATOR_LINE = "----------------------------------------------------------------------------------------------------------------------"
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+
+
 class VpnCommandProcessor(CommandProcessor):
+
+    # -------------------------------------------------------------------------------------------
+
+    _ca = None
 
     # -------------------------------------------------------------------------------------------
 
@@ -44,6 +56,9 @@ class VpnCommandProcessor(CommandProcessor):
         self._handlers.append((self.enable_client,  ( "enable",  "client"  ) ))
         self._handlers.append((self.remove_client,  ( "remove",  "client"  ) ))
 
+        # initialize the CA that is needed to process requests
+        self._ca = CertificateAuthority()
+
     # -------------------------------------------------------------------------------------------
 
     def list_clients(self, args):
@@ -56,7 +71,18 @@ class VpnCommandProcessor(CommandProcessor):
 
     def add_client(self, args):
 
-        Log.write_note("TODO: add client... {0}".format(args))
+        if len(args) != 4:
+            raise RuntimeError("Expecting 4 parameters, you specified {0} ({1})".format(len(args), args))
+
+        identity = args[2]
+        password = args[3]
+
+        Log.write_note("Adding client ({0})... {0}".format(identity))
+        data = self._ca.create_vpn_client_data(identity, password)
+
+        # log the generated PKCS12 archive 
+        dump = crypto.dump_certificate(crypto.FILETYPE_TEXT, data["certificate"]).decode('utf-8')
+        Log.write_note("Certificate of the VPN client\n{1}\n{0}\n{1}".format(dump, SEPARATOR_LINE))
 
 
     # -------------------------------------------------------------------------------------------

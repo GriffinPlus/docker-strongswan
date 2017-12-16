@@ -27,6 +27,7 @@ class CertificateAuthority:
         self._base_dir     = CA_BASE_DIR
         self._ca_cert_path = os.path.join(self._base_dir, "ca-cert.pem")
         self._ca_key_path  = os.path.join(self._base_dir, "ca-key.pem")
+        self._inited       = False
 
     # -------------------------------------------------------------------------------------------
 
@@ -38,6 +39,11 @@ class CertificateAuthority:
             need_key (bool): True, if the caller needs the private key of the CA for its operation;
                              False, if the caller only needs the public key of the CA for its operation.
         """
+
+        # abort, if the CA is already initialized 
+        # ---------------------------------------------------------------------
+        if self._inited and (not need_key or self._ca_key != None):
+            return
 
         # create directories where the key/certificate of the CA are stored, if necessary
         # ---------------------------------------------------------------------
@@ -101,6 +107,31 @@ class CertificateAuthority:
             os.chmod(self._ca_cert_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
             Log.write_note("The certificate of the CA was generated successfully.")
 
+        self._inited = True
+
+    # -------------------------------------------------------------------------------------------
+
+
+    @property
+    def ca_cert(self):
+        self.init_ca(False)
+        return self._ca_cert
+
+    @property
+    def ca_cert_path(self):
+        self.init_ca(False)
+        return self._ca_cert_path
+
+    @property
+    def ca_key(self):
+        self.init_ca(True)
+        return self._ca_key
+
+    @property
+    def ca_key_path(self):
+        self.init_ca(True)
+        return self._ca_key_path
+
 
     # -------------------------------------------------------------------------------------------
 
@@ -118,14 +149,14 @@ class CertificateAuthority:
         Returns:
             A dictionary containing data about the key/certificate of the VPN server.
             The dictionary contains the following data:
-            - 'key'                 (obj)  : OpenSSL key object
-            - 'key path'            (str)  : Full path of the key file on disk
-            - 'key created'         (bool) : True, if the key was created;
-                                             False, if the existing key was loaded
-            - 'certificate'         (obj)  : OpenSSL certificate object
-            - 'certificate path'    (str)  : Full path of the certificate file on disk
-            - 'certificate created' (bool) : True, if the certificate was created;
-                                             False, if the existing certificate was loaded
+            - 'key'                 (obj)  : OpenSSL key object of the server
+            - 'key path'            (str)  : Full path of the key file of the server on disk
+            - 'key created'         (bool) : True, if the server key was created;
+                                             False, if the existing server key was loaded
+            - 'certificate'         (obj)  : OpenSSL certificate object of the server
+            - 'certificate path'    (str)  : Full path of the server certificate file on disk
+            - 'certificate created' (bool) : True, if the server certificate was created;
+                                             False, if the existing server certificate was loaded
             
         """
 
@@ -197,10 +228,9 @@ class CertificateAuthority:
                 Log.write_note("The certificate of the VPN server ({0}) does not exist.".format(server_cert_path))
                 create_server_cert = True
 
-        # initialize the CA, if a new certificate is about to be created
+        # initialize the CA
         # ---------------------------------------------------------------------
-        if create_server_cert:
-            self.init_ca(True)
+        self.init_ca(create_server_cert)
 
         # load/create the server key
         # ---------------------------------------------------------------------
@@ -264,7 +294,7 @@ class CertificateAuthority:
             "key created"         : create_server_key,
             "certificate"         : server_cert,
             "certificate path"    : server_cert_path,
-            "certificate created" : create_server_cert
+            "certificate created" : create_server_cert,
         }
 
     # -------------------------------------------------------------------------------------------

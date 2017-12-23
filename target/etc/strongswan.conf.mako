@@ -5,7 +5,9 @@
 
 charon {
     load_modular = yes
+    interfaces_use = eth0
     send_vendor_id = yes
+
     plugins {
         include strongswan.d/charon/*.conf
     }

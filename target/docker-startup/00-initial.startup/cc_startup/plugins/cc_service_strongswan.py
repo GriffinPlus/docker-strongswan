@@ -6,14 +6,17 @@ License: MIT License
 
 import os
 import re
+import socket
 
 from ipaddress import IPv4Network, IPv6Network
 from mako.template import Template
 from OpenSSL import crypto, SSL
-from socket import gethostname
 from stat import S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP, S_IROTH, S_IWOTH
 from subprocess import run, DEVNULL
-from ..cc_helpers import read_text_file, write_text_file, replace_php_define, replace_php_variable, generate_password, get_env_setting_bool, get_env_setting_integer, get_env_setting_string, load_kernel_module
+from ..cc_helpers import read_text_file, write_text_file, \
+                         get_env_setting_bool, get_env_setting_integer, get_env_setting_string, \
+                         iptables_run, iptables_add, ip6tables_run, ip6tables_add, \
+                         load_kernel_module, resolve_hostnames
 from ..cc_log import Log
 from ..cc_service import Service
 from .cc_ca import CertificateAuthority
@@ -60,6 +63,10 @@ def get_service():
 
 class StrongSwan(Service):
 
+    # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
     def prepare(self):
         """
         Reads environment variables and checks preconditions the following call to configure() needs to succeed. In case
@@ -69,31 +76,45 @@ class StrongSwan(Service):
 
         # read settings in environment variables
         # -----------------------------------------------------------------------------------------
-        self._use_internal_pki                 = get_env_setting_bool("USE_INTERNAL_PKI", True)
-        self._vpn_hostnames                    = get_env_setting_string("VPN_HOSTNAMES", gethostname())
-        self._client_subnet_ipv4               = get_env_setting_string("CLIENT_SUBNET_IPV4", "10.0.0.0/24")
-        self._use_docker_dns                   = get_env_setting_bool("USE_DOCKER_DNS", False)
+        self._use_internal_pki   = get_env_setting_bool("USE_INTERNAL_PKI", True)
+        self._vpn_hostnames      = get_env_setting_string("VPN_HOSTNAMES", socket.gethostname())
+        self._client_subnet_ipv4 = get_env_setting_string("CLIENT_SUBNET_IPV4", "10.0.0.0/24")
+        self._client_subnet_ipv6 = get_env_setting_string("CLIENT_SUBNET_IPV6", "fd00:DEAD:BEEF::/112")
+        self._use_docker_dns     = get_env_setting_bool("USE_DOCKER_DNS", True)
 
         if self._use_docker_dns:
             self._dns_servers = "127.0.0.11"
         else:
             self._dns_servers = get_env_setting_string("DNS SERVERS", "8.8.8.8, 8.8.4.4, 2001:4860:4860::8888, 2001:4860:4860::8844")
 
-        self._allow_internet_access            = get_env_setting_bool("ALLOW_INTERNET_ACCESS", True)
-        self._allow_inter_client_communication = get_env_setting_bool("ALLOW_INTER_CLIENT_COMMUNICATION", False)
+        self._allow_internet_access           = get_env_setting_bool("ALLOW_INTERNET_ACCESS", True)
+        self._allow_interclient_communication = get_env_setting_bool("ALLOW_INTERCLIENT_COMMUNICATION", False)
 
         # split up hostnames
         self._vpn_hostnames = [ s.strip() for s in self._vpn_hostnames.split(",") ]
 
+        # determine IP addresses that map to the configured hostnames
+        Log.write_note("Looking up IP addresses of the specified hostnames...")
+        self._ip_addresses_by_hostname = resolve_hostnames(self._vpn_hostnames)
+        for hostname,(ipv4_addresses,ipv6_addresses) in self._ip_addresses_by_hostname.items():
+            if len(ipv4_addresses) > 0:
+                Log.write_note("- {0} : {1}".format(hostname, ",".join(ipv4_addresses)))
+            if len(ipv6_addresses) > 0:
+                Log.write_note("- {0} : {1}".format(hostname, ",".join(ipv6_addresses)))
+
         # split up DNS servers
         self._dns_servers = [ s.strip() for s in self._dns_servers.split(",") ]
+
+        # mark to attach to IPSec packets
+        self._ipsec_packet_mark = 42
 
         # load af_key module is loaded (kernel support for IPSec)
         load_kernel_module("af_key")
 
 
-    # ---------------------------------------------------------------------------------------------------------------------
-
+    # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
     def configure(self):
         """
@@ -110,6 +131,8 @@ class StrongSwan(Service):
         # determine the start and the end of the client ip range
         # (the first address becomes the IP of the VPN server itself)
         # -----------------------------------------------------------------------------------------
+
+        # IPv4
         client_subnet_ipv4 = IPv4Network(self._client_subnet_ipv4)
         for (index, host_ip) in enumerate(client_subnet_ipv4.hosts()):
             if index == 0:
@@ -119,6 +142,17 @@ class StrongSwan(Service):
             else:
                 self._client_ip_range_end_ipv4 = str(host_ip)
 
+        # IPv6
+        client_subnet_ipv6 = IPv6Network(self._client_subnet_ipv6)
+        for (index, host_ip) in enumerate(client_subnet_ipv6.hosts()):
+            if index == 0:
+                self._own_ip_in_client_subnet_ipv6 = str(host_ip)
+            elif index == 1:
+                self._client_ip_range_start_ipv6 = str(host_ip)
+            else:
+                self._client_ip_range_end_ipv6 = str(host_ip)
+
+
         # prepare context for the template engine that will generate strongswan.conf and ipsec.conf
         # -----------------------------------------------------------------------------------------
         template_context = {
@@ -127,10 +161,15 @@ class StrongSwan(Service):
           "server_key_path"                : self._server_key_path,
           "server_cert_path"               : self._server_cert_path,
           "dns_servers"                    : self._dns_servers,
+          "ip_addresses_by_hostname"       : self._ip_addresses_by_hostname,
           "client_subnet_ipv4"             : self._client_subnet_ipv4,
+          "client_subnet_ipv6"             : self._client_subnet_ipv6,
+          "own_ip_in_client_subnet_ipv4"   : self._own_ip_in_client_subnet_ipv4,
           "client_ip_range_start_ipv4"     : self._client_ip_range_start_ipv4,
           "client_ip_range_end_ipv4"       : self._client_ip_range_end_ipv4,
-          "own_ip_in_client_subnet_ipv4"   : self._own_ip_in_client_subnet_ipv4
+          "own_ip_in_client_subnet_ipv6"   : self._own_ip_in_client_subnet_ipv6,
+          "client_ip_range_start_ipv6"     : self._client_ip_range_start_ipv6,
+          "client_ip_range_end_ipv6"       : self._client_ip_range_end_ipv6,
         }
 
         # generate strongswan.conf
@@ -165,76 +204,250 @@ class StrongSwan(Service):
         # add a dummy device with an ip address for the vpn server in the client network
         run(["ip", "link", "add", "type", "dummy"], check=True, stdout=DEVNULL)
         run(["ip", "addr", "add", self._own_ip_in_client_subnet_ipv4, "dev", "dummy0"], check=True, stdout=DEVNULL)
+        run(["ip", "addr", "add", self._own_ip_in_client_subnet_ipv6, "dev", "dummy0"], check=True, stdout=DEVNULL)
         run(["ip", "link", "set", "up", "dummy0"], check=True, stdout=DEVNULL)
         run(["ip", "route", "add", self._own_ip_in_client_subnet_ipv4, "dev", "dummy0"], check=True, stdout=DEVNULL)
+        run(["ip", "route", "add", self._own_ip_in_client_subnet_ipv6, "dev", "dummy0"], check=True, stdout=DEVNULL)
 
         # enable forwarding
         run(["sysctl", "-w", "net.ipv4.ip_forward=1"], check=True, stdout=DEVNULL)
+        run(["sysctl", "-w", "net.ipv6.conf.all.forwarding=1"], check=True, stdout=DEVNULL)
+
+        # accept router advertisements on eth0, although we're forwarding packets
+        run(["sysctl", "-w", "net.ipv6.conf.eth0.accept_ra=2"], check=True, stdout=DEVNULL)
 
         # do not accept ICMP redirects (prevent MITM attacks)
         run(["sysctl", "-w", "net.ipv4.conf.all.accept_redirects=0"], check=True, stdout=DEVNULL)
+        run(["sysctl", "-w", "net.ipv6.conf.all.accept_redirects=0"], check=True, stdout=DEVNULL)
 
         # do not send ICMP redirects (we are not a router that should redirect others)
+        # (in IPv6 redirects are mandatory for routers)
         run(["sysctl", "-w", "net.ipv4.conf.all.send_redirects=0"], check=True, stdout=DEVNULL)
 
         # disable Path MTU discovery to prevent packet fragmentation problems
-        # run(["sysctl", "-w", "net.ipv4.ip_no_pmtu_disc=1"], check=True, stdout=DEVNULL)
+        run(["sysctl", "-w", "net.ipv4.ip_no_pmtu_disc=1"], check=True, stdout=DEVNULL)
 
-        # -----------------------------------------------------------------------------------------
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-        Log.write_note("=> IPv4: Configuring firewall for incoming connections")
+        Log.write_note("=> Configuring firewall")
+
+        # filter all packets that have RH0 headers (deprecated, can be used for DoS attacks)
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        ip6tables_add("INPUT",   "DROP", ["-m", "rt", "--rt-type", "0"], "RH0 Exploit Protection")
+        ip6tables_add("FORWARD", "DROP", ["-m", "rt", "--rt-type", "0"], "RH0 Exploit Protection")
+        ip6tables_add("OUTPUT",  "DROP", ["-m", "rt", "--rt-type", "0"], "RH0 Exploit Protection")
+
+        # protect against spoofing attacks
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+        # prevent attacker from using the loopback address as source address
+        iptables_add( "INPUT",   "DROP", ["!", "-i", "lo", "-s", "127.0.0.0/8"], "Anti-Spoofing")
+        iptables_add( "FORWARD", "DROP", ["!", "-i", "lo", "-s", "127.0.0.0/8"], "Anti-Spoofing")
+        ip6tables_add("INPUT",   "DROP", ["!", "-i", "lo", "-s", "::1/128"],     "Anti-Spoofing")
+        ip6tables_add("FORWARD", "DROP", ["!", "-i", "lo", "-s", "::1/128"],     "Anti-Spoofing")
+
+        # prevent attacker from using a VPN client address as source address
+        iptables_add( "INPUT",   "DROP", ["-i", "eth0", "-s", self._client_subnet_ipv4, "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
+        iptables_add( "FORWARD", "DROP", ["-i", "eth0", "-s", self._client_subnet_ipv4, "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
+        ip6tables_add("INPUT",   "DROP", ["-i", "eth0", "-s", self._client_subnet_ipv6, "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
+        ip6tables_add("FORWARD", "DROP", ["-i", "eth0", "-s", self._client_subnet_ipv6, "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
 
         # allow localhost to access everything
-        run(["iptables", "-A", "INPUT", "-i", "lo", "-j", "ACCEPT"], check=True, stdout=DEVNULL)
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        iptables_add( "INPUT", "ACCEPT", ["-i", "lo"])
+        ip6tables_add("INPUT", "ACCEPT", ["-i", "lo"])
 
-        # allow packets that belong to self-initiated connections
-        run(["iptables", "-A", "INPUT", "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"], check=True, stdout=DEVNULL)
+        # allow multicast
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        ip6tables_add("INPUT", "ACCEPT", ["-d", "ff00::/8"], "Multicasting")
 
         # allow IPSec related traffic
-        run(["iptables", "-A", "INPUT", "-p", "udp", "--dport", "500",  "-j", "ACCEPT"], check=True, stdout=DEVNULL)
-        run(["iptables", "-A", "INPUT", "-p", "udp", "--dport", "4500", "-j", "ACCEPT"], check=True, stdout=DEVNULL)
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        iptables_add( "INPUT", "ACCEPT", ["-p", "udp", "--dport", "500"])
+        iptables_add( "INPUT", "ACCEPT", ["-p", "udp", "--dport", "4500"])
+        iptables_add( "INPUT", "ACCEPT", ["-p", "esp"])
+        ip6tables_add("INPUT", "ACCEPT", ["-p", "udp", "--dport", "500"])
+        ip6tables_add("INPUT", "ACCEPT", ["-p", "udp", "--dport", "4500"])
+        ip6tables_add("INPUT", "ACCEPT", ["-p", "esp"])
+
+        # allow packets that belong to already existing connections
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        iptables_add( "INPUT",   "DROP",   ["-m", "conntrack", "--ctstate", "INVALID"])
+        iptables_add( "INPUT",   "ACCEPT", ["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED"])
+        iptables_add( "FORWARD", "DROP",   ["-m", "conntrack", "--ctstate", "INVALID"])
+        iptables_add( "FORWARD", "ACCEPT", ["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED"])
+        ip6tables_add("INPUT",   "DROP",   ["-m", "conntrack", "--ctstate", "INVALID"])
+        ip6tables_add("INPUT",   "ACCEPT", ["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED"])
+        ip6tables_add("FORWARD", "DROP",   ["-m", "conntrack", "--ctstate", "INVALID"])
+        ip6tables_add("FORWARD", "ACCEPT", ["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED"])
 
         # allow VPN clients to access the DNS server
-        run(["iptables", "-A", "INPUT", "-p", "udp", "--source", self._client_subnet_ipv4, "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec", "--proto", "esp", "-j", "ACCEPT"], check=True, stdout=DEVNULL)
-        run(["iptables", "-A", "INPUT", "-p", "tcp", "--source", self._client_subnet_ipv4, "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec", "--proto", "esp", "-j", "ACCEPT"], check=True, stdout=DEVNULL)
-
-        # drop everything else
-        run(["iptables", "-A", "INPUT", "-j", "DROP"], check=True, stdout=DEVNULL)
-
-        # -----------------------------------------------------------------------------------------
-
-        Log.write_note("=> IPv4: Configuring firewall for routing")
-
-        # let packets that belong to existing connections pass
-        run(["iptables", "-A", "FORWARD", "-m", "conntrack", "--ctstate", "INVALID", "-j", "DROP"], check=True, stdout=DEVNULL)
-        run(["iptables", "-A", "FORWARD", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"], check=True, stdout=DEVNULL)
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        iptables_add( "INPUT", "ACCEPT", ["-p", "udp", "-s", self._client_subnet_ipv4, "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
+        iptables_add( "INPUT", "ACCEPT", ["-p", "tcp", "-s", self._client_subnet_ipv4, "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
+        ip6tables_add("INPUT", "ACCEPT", ["-p", "udp", "-s", self._client_subnet_ipv6, "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
+        ip6tables_add("INPUT", "ACCEPT", ["-p", "tcp", "-s", self._client_subnet_ipv6, "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
 
         # block packets between VPN clients (if requested)
-        if not self._allow_inter_client_communication:
-            run(["iptables", "-A", "FORWARD", "-s", self._client_subnet_ipv4, "-d", self._client_subnet_ipv4, "-j", "DROP"], check=True, stdout=DEVNULL)
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        if not self._allow_interclient_communication:
+            iptables_add( "FORWARD", "DROP", ["-s", self._client_subnet_ipv4, "-d", self._client_subnet_ipv4])
+            ip6tables_add("FORWARD", "DROP", ["-s", self._client_subnet_ipv6, "-d", self._client_subnet_ipv6])
 
-        # let IPSec packets to/from clients pass
-        run(["iptables", "-A", "FORWARD", "-i", "eth0", "-o", "eth0", "-s", self._client_subnet_ipv4, "-m", "policy", "--dir", "in", "--pol", "ipsec", "--proto", "esp", "-j", "ACCEPT"], check=True, stdout=DEVNULL)
-        run(["iptables", "-A", "FORWARD", "-i", "eth0", "-o", "eth0", "-d", self._client_subnet_ipv4, "-m", "policy", "--dir", "out", "--pol", "ipsec", "--proto", "esp", "-j", "ACCEPT"], check=True, stdout=DEVNULL)
+        # allow ICMP packets
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-        # Reduce the size of tcp packets by adjusting the packets' maximum segment size to prevent IP packet fragmentation on some clients
-        # This prevents issues with some VPN clients, but it is an evil workaround (google 'MSS Clamping' for details)
-#        run(["iptables", "-t", "mangle", "-A", "FORWARD",
-#            "--match", "policy", "--dir", "in", "--pol", "ipsec", "-s", self._client_subnet_ipv4, "-o", "eth0",
-#            "-p", "tcp", "-m", "tcp", "--tcp-flags", "SYN,RST", "SYN", "-m", "tcpmss", "--mss", "1361:1536",
-#            "-j", "TCPMSS", "--set-mss", "1360"], check=True, stdout=DEVNULL)
+        # ICMP Type | INPUT | FORWARD | Description
+        # -----------------------------------------------------------------------------------------
+        #       0   |  yes  |   yes   | echo reply
+        #       3   |  yes  |   yes   | destination unreachable
+        #       8   |  yes  |   yes   | echo request (protect against ping-of-death)
+        #      11   |  yes  |   yes   | time exceeded
+        #      12   |  yes  |   yes   | parameter problem
+        #      30   |  yes  |   yes   | traceroute
+        # -----------------------------------------------------------------------------------------
 
-        # drop all packets that did not match one of the preceding rules
-        run(["iptables", "-A", "FORWARD", "-j", "DROP"], check=True, stdout=DEVNULL)
+        iptables_run(["-N", "AllowICMP_I"])
+        iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "0"])
+        iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "3"])
+        iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "8", "-m", "limit", "--limit", "1/sec", "--limit-burst", "10"])
+        iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "11"])
+        iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "12"])
+        iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "30"])
+        iptables_add("AllowICMP_I", "DROP")
+        iptables_add("INPUT", "AllowICMP_I", ["-p", "icmp"])
+
+        iptables_run(["-N", "AllowICMP_F"])
+        iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "0"])
+        iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "3"])
+        iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "8", "-m", "limit", "--limit", "1/sec", "--limit-burst", "10"])
+        iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "11"])
+        iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "12"])
+        iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "30"])
+        iptables_add("AllowICMP_F", "DROP")
+        iptables_add("FORWARD", "AllowICMP_F", ["-p", "icmp"])
+
+        #  ICMPv6 Type | INPUT | FORWARD | Description
+        # -----------------------------------------------------------------------------------------
+        #         1    |  yes  |   yes   | destination unreachable
+        #         2    |  yes  |   yes   | packet too big
+        #         3    |  yes  |   yes   | time exceeded
+        #         4    |  yes  |   yes   | parameter problem
+        #       128    |  yes  |   yes   | echo request (protect against ping-of-death)
+        #       129    |  yes  |   yes   | echo reply
+        #       130    |  yes  |   yes   | multicast listener query
+        #       131    |  yes  |   yes   | version 1 multicast listener report
+        #       132    |  yes  |   yes   | multicast listener done
+        #       133    |  yes  |   no    | router solicitation
+        #       134    |  yes  |   no    | router advertisement
+        #       135    |  yes  |   no    | neighbor solicitation
+        #       136    |  yes  |   no    | neighbor advertisement
+        #       151    |  yes  |   no    | multicast router advertisement
+        #       152    |  yes  |   no    | multicast router solicitation
+        #       153    |  yes  |   no    | multicast router termination
+        # -----------------------------------------------------------------------------------------
+        ip6tables_run(["-N", "AllowICMP_I"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "1"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "2"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "3"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "4"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "128", "-m", "limit", "--limit", "1/sec", "--limit-burst", "10"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "129"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "130"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "131"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "132"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "133"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "134"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "135"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "136"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "151"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "152"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "153"])
+        ip6tables_add("AllowICMP_I", "DROP")
+        ip6tables_add("INPUT", "AllowICMP_I", ["-p", "icmpv6"])
+
+        ip6tables_run(["-N", "AllowICMP_F"])
+        ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "1"])
+        ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "2"])
+        ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "3"])
+        ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "4"])
+        ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "128", "-m", "limit", "--limit", "1/sec", "--limit-burst", "10"])
+        ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "129"])
+        ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "130"])
+        ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "131"])
+        ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "132"])
+        ip6tables_add("AllowICMP_F", "DROP")
+        ip6tables_add("FORWARD", "AllowICMP_F", ["-p", "icmpv6"])
+
+        # allow VPN clients to initiate new connections (connections from the internet to clients are blocked)
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        iptables_add( "FORWARD", "ACCEPT", ["-s", self._client_subnet_ipv4, "-m", "conntrack", "--ctstate", "NEW", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
+        ip6tables_add("FORWARD", "ACCEPT", ["-s", self._client_subnet_ipv6, "-m", "conntrack", "--ctstate", "NEW", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
+
+        # drop everything else
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        iptables_add( "INPUT",   "DROP")
+        iptables_add( "FORWARD", "DROP")
+        ip6tables_add("INPUT",   "DROP")
+        ip6tables_add("FORWARD", "DROP")
+
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        # Packet Mangling
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+        # Reduce the size of TCP packets by adjusting the packets' maximum segment size to prevent IP packet fragmentation on some clients
+        # This prevents issues with some VPN clients, but it is controversially discussed (google 'MSS Clamping' for details).
+        # Many tunnel implementation use a tunnel MTU of 1400 bytes, so the following MSS values should be reasonable:
+        # - TCP MSS (IPv4): 1400 bytes (tunnel MTU) - 20 bytes (IPv4 header) - 20 bytes (TCP header) = 1360 bytes
+        # - TCP MSS (IPv6): 1400 bytes (tunnel MTU) - 40 bytes (IPv6 header) - 20 bytes (TCP header) = 1340 bytes
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        iptables_run([ "-t", "mangle",
+                       "-A", "FORWARD",
+                       "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
+                       "-s", self._client_subnet_ipv4,
+                       "-m", "policy", "--dir", "in", "--pol", "ipsec",
+                       "-m", "tcpmss", "--mss", "1361:1500",
+                       "-j", "TCPMSS", "--set-mss", "1360"])
+
+        ip6tables_run(["-t", "mangle",
+                       "-A", "FORWARD",
+                       "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
+                       "-s", self._client_subnet_ipv6,
+                       "-m", "policy", "--dir", "in", "--pol", "ipsec",
+                       "-m", "tcpmss", "--mss", "1341:1500",
+                       "-j", "TCPMSS", "--set-mss", "1340"])
 
         # configure masquerading to allow clients to access the internet, if requested
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
         if self._allow_internet_access:
-            Log.write_note("=> IPv4: Enabling masquerading")
-            run(["iptables", "-t", "nat", "-A", "POSTROUTING", "-s", self._client_subnet_ipv4, "-o", "eth0", "-m", "policy", "--dir", "out", "--pol", "ipsec", "-j", "ACCEPT"], check=True, stdout=DEVNULL)
-            run(["iptables", "-t", "nat", "-A", "POSTROUTING", "-s", self._client_subnet_ipv4, "-o", "eth0", "-j", "MASQUERADE"], check=True, stdout=DEVNULL)
 
+            Log.write_note("=> Enabling masquerading")
 
-    # ---------------------------------------------------------------------------------------------------------------------
+            iptables_add( "POSTROUTING", "ACCEPT", [
+                          "-t", "nat",
+                          "-s", self._client_subnet_ipv4,
+                          "-o", "eth0",
+                          "-m", "policy", "--dir", "out", "--pol", "ipsec"])
+
+            iptables_add( "POSTROUTING", "MASQUERADE", [
+                          "-t", "nat",
+                          "-s", self._client_subnet_ipv4,
+                          "-o", "eth0"])
+
+            ip6tables_add( "POSTROUTING", "ACCEPT", [
+                           "-t", "nat",
+                           "-s", self._client_subnet_ipv6,
+                           "-o", "eth0",
+                           "-m", "policy", "--dir", "out", "--pol", "ipsec"])
+
+            ip6tables_add( "POSTROUTING", "MASQUERADE", [
+                           "-t", "nat",
+                           "-s", self._client_subnet_ipv6,
+                           "-o", "eth0"])
+
+    # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
     def init_pki_internal(self):
         """

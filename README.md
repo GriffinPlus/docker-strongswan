@@ -78,9 +78,18 @@ Default: `10.0.0.0/24`
 
 #### CLIENT_SUBNET_IPV6
 
-Determines the subnet from which IPv6 addresses are assigned to VPN clients. The subnet should be in the range of randomly assigned *Unique Local Adresses (ULA)* (fd::/8) and follow the blueprint of these ULAs: `fdxx xxxx xxxx yyyy zzzz zzzz zzzz zzzz`, where *x* is a random site id, *y* is a subnet id within the site and *z* is a hosts address within that subnet. This guarantees that the chosen subnet does not conflict with global addresses and makes it very unlikely to conflict with other subnets at your site.
+Determines the subnet from which IPv6 addresses are assigned to VPN clients. The subnet can either be a subnet in the *Unique Local Unicast Address (ULA, fc00::/7)* range or in the *Global Unicast Address (GUA, 2000::/3)* range.
 
-Default: `fd00:DEAD:BEEF::/112`
+##### Unique Unicast Addresses (ULA)
+A subnet in the ULA range has the benefit that these IP addresses are not visible on the public internet, the IP addresses are only used by the VPN server and its clients to communicate with each other. There is no additional setup needed to get it working. Any communication with the public internet is done using *Masquerading*, a network address translation (NAT) technique that replaces internal IP addresses with the IP address of the VPN server for connections to the public internet. Although masquerading works really well for most protocols it can cause strange effects with some protocols, especially when multiple clients using the same protocol are involved. A tiny plus of using masquerading is that the IP address of a VPN client cannot be determined by visited sites as the IP address of the VPN server is used as the sender address in packets.
+
+You should consider [RFC 4193](https://tools.ietf.org/html/rfc4193) for details on how to choose a proper subnet from the ULA range. To cut a long story short, you should use the "randomly" generated approach (fd00::/8) and build the prefix using the following blueprint: `fdxx xxxx xxxx yyyy zzzz zzzz zzzz zzzz`, where *x* is a random site id, *y* is a random subnet id within the site and *z* is the hosts part within that subnet. This guarantees that the chosen subnet does not conflict with global addresses and makes it very unlikely to conflict with other subnets at your site.
+
+##### Global Unicast Addresses (GUA)
+
+TODO
+
+Default: `fd00:DEAD:BEEF:AFFE::/64` (ULA, Site-ID: `DEAD:BEEF`, Subnet-ID: `AFFE`)
 
 #### DNS_SERVERS
 

@@ -6,7 +6,7 @@ MAINTAINER Sascha Falk <sascha@falk-online.eu>
 RUN apt-get -y update && \
   apt-get -y install \
     bind9 \
-    iptables \
+    ndppd \
     strongswan \
     strongswan-plugin-af-alg \
     strongswan-plugin-eap-dynamic \

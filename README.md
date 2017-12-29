@@ -42,21 +42,12 @@ Although the container comes with a set of sensible default settings, it is reco
 docker run \
   --env VPN_HOSTNAMES="vpn.my-domain.com" \
   --env CLIENT_SUBNET_IPV4="10.0.0.0/24" \
-  --env CLIENT_SUBNET_IPV6="fd00:DEAD:BEEF::/112" \
+  --env CLIENT_SUBNET_IPV6="fd00:DEAD:BEEF:AFFE:/64" \
   cloudycube/strongwan
 ```
-Please replace the FQDN via which the VPN server is reachable from the internet and the subnets from which client IP addresses are assigned. In the example above the VPN server will take `10.0.0.1` and `fc00:DEAD:BEEF::1` as its own internal address and assign IPv4 addresses from `10.0.0.2` to `10.0.0.254` and IPv6 addresses from `fd00:DEAD:BEEF::2` to `fd00:DEAD:BEEF::FF` to connecting VPN clients.
+Please replace the FQDN via which the VPN server is reachable from the internet and the subnets from which client IP addresses are assigned. In the example above the VPN server will take `10.0.0.1` and `fc00:DEAD:BEEF:AFFE:1` as its own internal address and assign the remaining addresses to connecting VPN clients.
 
 ### Environment Variables
-
-#### ALLOW_INTERNET_ACCESS
-
-Determines whether VPN clients are allowed to access the internet.
-
-- `true`, `1` => VPN clients are allowed to access the internet.
-- `false`, `0` => VPN clients are not allowed to access the internet.
-
-Default Value: `true`
 
 #### ALLOW_INTERCLIENT_COMMUNICATION
 
@@ -81,13 +72,19 @@ Default: `10.0.0.0/24`
 Determines the subnet from which IPv6 addresses are assigned to VPN clients. The subnet can either be a subnet in the *Unique Local Unicast Address (ULA, fc00::/7)* range or in the *Global Unicast Address (GUA, 2000::/3)* range.
 
 ##### Unique Unicast Addresses (ULA)
-A subnet in the ULA range has the benefit that these IP addresses are not visible on the public internet, the IP addresses are only used by the VPN server and its clients to communicate with each other. There is no additional setup needed to get it working. Any communication with the public internet is done using *Masquerading*, a network address translation (NAT) technique that replaces internal IP addresses with the IP address of the VPN server for connections to the public internet. Although masquerading works really well for most protocols it can cause strange effects with some protocols, especially when multiple clients using the same protocol are involved. A tiny plus of using masquerading is that the IP address of a VPN client cannot be determined by visited sites as the IP address of the VPN server is used as the sender address in packets.
+
+A subnet in the ULA range has the benefit that these IP addresses are not visible on the public internet. The IP addresses are only used by the VPN server and its clients to communicate with each other. There is no additional setup needed to get it working. Any communication with the public internet is done using *Masquerading*, a network address translation (NAT) technique that replaces internal IP addresses with the IP address of the VPN server for connections to the public internet. Although masquerading works really well for most protocols it can cause strange effects with some protocols, especially when multiple clients using the same protocol are involved. A tiny plus of using masquerading is that the IP address of a VPN client cannot be determined by visited sites as the IP address of the VPN server is used as the sender address in packets.
 
 You should consider [RFC 4193](https://tools.ietf.org/html/rfc4193) for details on how to choose a proper subnet from the ULA range. To cut a long story short, you should use the "randomly" generated approach (fd00::/8) and build the prefix using the following blueprint: `fdxx xxxx xxxx yyyy zzzz zzzz zzzz zzzz`, where *x* is a random site id, *y* is a random subnet id within the site and *z* is the hosts part within that subnet. This guarantees that the chosen subnet does not conflict with global addresses and makes it very unlikely to conflict with other subnets at your site.
 
 ##### Global Unicast Addresses (GUA)
 
-TODO
+A subnet in the GUA range has the benefit that VPN clients have direct access to the public internet and no network address translation (NAT) is needed that might cause issues with some protocols. By default new connections from the public internet to VPN clients are blocked by the internal firewall. Please see [PROTECT_CLIENTS_FROM_INTERNET](#protect-clients-from-internet) for details on how to disable this protection.
+
+In order to use a GUA subnet you must configure your host to forward packets that belong to the specified subnet to the container, otherwise internet access will not work:
+```
+ip -6 route add <client-subnet> via <container-ip>
+```
 
 Default: `fd00:DEAD:BEEF:AFFE::/64` (ULA, Site-ID: `DEAD:BEEF`, Subnet-ID: `AFFE`)
 
@@ -96,6 +93,15 @@ Default: `fd00:DEAD:BEEF:AFFE::/64` (ULA, Site-ID: `DEAD:BEEF`, Subnet-ID: `AFFE
 Determines the DNS servers name resolution requests are forwarded to, if `USE_DOCKER_DNS` is `false`.
 
 Default Value: `8.8.8.8, 8.8.4.4, 2001:4860:4860::8888, 2001:4860:4860::8844` (Google Public DNS)
+
+#### PROTECT_CLIENTS_FROM_INTERNET
+
+Determines whether VPN clients can be accessed from the public internet, i.e. whether new connections can be established from the public internet. Connections that are initiated by VPN clients are not effected. This setting only takes effect, if [CLIENT_SUBNET_IPV6](#client-subnet-ipv6) specifies a subnet in the GUA range.
+
+- `true`, `1` => VPN clients are protected, i.e. they cannot be accessed from the public internet.
+- `false`, `0` => VPN clients are not protected, i.e. they can be accessed from the public internet.
+
+Default Value: `True`
 
 #### STARTUP_VERBOSITY
 

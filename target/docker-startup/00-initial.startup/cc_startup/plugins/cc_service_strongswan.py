@@ -82,16 +82,9 @@ class StrongSwan(Service):
         up before configure() modifies any configuration files.
         """
 
-        # USE_INTERNAL_PKI
-        # -----------------------------------------------------------------------------------------
-        self._use_internal_pki   = get_env_setting_bool("USE_INTERNAL_PKI", True)
-
-        # VPN_HOSTNAMES
-        # -----------------------------------------------------------------------------------------
-        self._vpn_hostnames = get_env_setting_string("VPN_HOSTNAMES", socket.gethostname())
-        self._vpn_hostnames = [ s.strip() for s in self._vpn_hostnames.split(",") ]
-
-# TODO: add validation
+        # ALLOW_INTERCLIENT_COMMUNICATION
+        # -------------------------------------------------------------------------------------------------------------
+        self._allow_interclient_communication = get_env_setting_bool("ALLOW_INTERCLIENT_COMMUNICATION", False)
 
         # CLIENT_SUBNET_IPV4
         # -----------------------------------------------------------------------------------------
@@ -104,7 +97,7 @@ class StrongSwan(Service):
 
         # CLIENT_SUBNET_IPV6
         # (must be either in the Global Unicast Address (GUA) range or in the site-local range)
-        # -----------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
 
         # read environment variable
         self._client_subnet_ipv6 = get_env_setting_string("CLIENT_SUBNET_IPV6", "fd00:DEAD:BEEF:AFFE::/64")
@@ -127,23 +120,34 @@ class StrongSwan(Service):
             raise RuntimeError()
 
         # USE_DOCKER_DNS
-        # -----------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         self._use_docker_dns = get_env_setting_bool("USE_DOCKER_DNS", True)
 
         # DNS_SERVERS
-        # -----------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         if self._use_docker_dns: self._dns_servers = "127.0.0.11"
         else:                    self._dns_servers = get_env_setting_string("DNS SERVERS", "8.8.8.8, 8.8.4.4, 2001:4860:4860::8888, 2001:4860:4860::8844")
         self._dns_servers = [ s.strip() for s in self._dns_servers.split(",") ]
 
 # TODO: add validation
 
-        # ALLOW_INTERCLIENT_COMMUNICATION
-        # -----------------------------------------------------------------------------------------
-        self._allow_interclient_communication = get_env_setting_bool("ALLOW_INTERCLIENT_COMMUNICATION", False)
+        # USE_INTERNAL_PKI
+        # -------------------------------------------------------------------------------------------------------------
+        self._use_internal_pki   = get_env_setting_bool("USE_INTERNAL_PKI", True)
+
+        # VPN_HOSTNAMES
+        # -------------------------------------------------------------------------------------------------------------
+        self._vpn_hostnames = get_env_setting_string("VPN_HOSTNAMES", socket.gethostname())
+        self._vpn_hostnames = [ s.strip() for s in self._vpn_hostnames.split(",") ]
+
+# TODO: add validation
+
+        # PROTECT_CLIENTS_FROM_INTERNET
+        # -------------------------------------------------------------------------------------------------------------
+        self._protect_clients_from_internet = get_env_setting_bool("PROTECT_CLIENTS_FROM_INTERNET", True)
 
         # determine IP addresses that map to the configured hostnames
-        # -----------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         Log.write_note("Looking up IP addresses of the specified hostnames...")
         self._ip_addresses_by_hostname = resolve_hostnames(self._vpn_hostnames)
         for hostname,(ipv4_addresses,ipv6_addresses) in self._ip_addresses_by_hostname.items():
@@ -153,7 +157,7 @@ class StrongSwan(Service):
                 Log.write_note("- {0} : {1}".format(hostname, ",".join(ipv6_addresses)))
 
         # load af_key module is loaded (kernel support for IPSec)
-        # -----------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         load_kernel_module("af_key")
 
 
@@ -167,7 +171,7 @@ class StrongSwan(Service):
         """
 
         # setup cryptographic stuff
-        # -----------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         if self._use_internal_pki:
             self.init_pki_internal()
         else:
@@ -175,7 +179,7 @@ class StrongSwan(Service):
 
         # determine the start and the end of the client ip range
         # (the first address becomes the IP of the VPN server itself)
-        # -----------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
 
         # IPv4
         self._own_ip_in_client_subnet_ipv4 = self._client_subnet_ipv4[1]
@@ -193,7 +197,7 @@ class StrongSwan(Service):
         self._client_ip_range_end_ipv6 = effective_client_subnet_ipv6[-1]
 
         # prepare context for the template engine that will generate strongswan.conf and ipsec.conf
-        # -----------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         template_context = {
           "ca_key_path"                    : self._ca_key_path,
           "ca_cert_path"                   : self._ca_cert_path,
@@ -212,42 +216,42 @@ class StrongSwan(Service):
         }
 
         # generate bind.conf.options
-        # -----------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         rendered = Template(filename = NAMED_CONF_OPTIONS_TEMPLATE_PATH).render(**template_context)
         with open(NAMED_CONF_OPTIONS_PATH, "wt") as f:
             f.write(rendered)
 
         # generate ipsec.conf
-        # -----------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         rendered = Template(filename = IPSEC_CONF_TEMPLATE_PATH).render(**template_context)
         with open(IPSEC_CONF_PATH, "wt") as f:
             f.write(rendered)
 
         # generate ipsec.secrets
-        # -----------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         rendered = Template(filename = IPSEC_SECRETS_TEMPLATE_PATH).render(**template_context)
         with open(IPSEC_SECRETS_PATH, "wt") as f:
             f.write(rendered)
 
         # generate strongswan.conf
-        # -----------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         rendered = Template(filename = STRONGSWAN_CONF_TEMPLATE_PATH).render(**template_context)
         with open(STRONGSWAN_CONF_PATH, "wt") as f:
             f.write(rendered)
 
         # generate ndppd.conf
-        # -----------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         rendered = Template(filename = NDPPD_CONF_TEMPLATE_PATH).render(**template_context)
         with open(NDPPD_CONF_PATH, "wt") as f:
             f.write(rendered)
 
         # disable ndppd, if VPN clients do not have global addresses (no need for neighbor discovery)
-        # -----------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         if not self._client_subnet_ipv6_is_gua:
             os.rename(SUPERVISORD_NDPPD_CONF_PATH, SUPERVISORD_NDPPD_CONF_PATH + ".inactive")
 
         # remount /proc/sys read-write to enable 'sysctl' to work properly
-        # -----------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         Log.write_note("Remounting /proc/sys read-write...")
         run(["mount", "-o", "remount,rw", "/proc/sys"], check=True, stdout=DEVNULL)
 
@@ -283,18 +287,19 @@ class StrongSwan(Service):
         # disable Path MTU discovery to prevent packet fragmentation problems
         run(["sysctl", "-w", "net.ipv4.ip_no_pmtu_disc=1"], check=True, stdout=DEVNULL)
 
+        # configure firewalling
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
         Log.write_note("=> Configuring firewall")
 
         # filter all packets that have RH0 headers (deprecated, can be used for DoS attacks)
-        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         ip6tables_add("INPUT",   "DROP", ["-m", "rt", "--rt-type", "0"], "RH0 Exploit Protection")
         ip6tables_add("FORWARD", "DROP", ["-m", "rt", "--rt-type", "0"], "RH0 Exploit Protection")
         ip6tables_add("OUTPUT",  "DROP", ["-m", "rt", "--rt-type", "0"], "RH0 Exploit Protection")
 
         # protect against spoofing attacks
-        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
 
         # prevent attacker from using the loopback address as source address
         iptables_add( "INPUT",   "DROP", ["!", "-i", "lo", "-s", "127.0.0.0/8"], "Anti-Spoofing")
@@ -309,12 +314,12 @@ class StrongSwan(Service):
         ip6tables_add("FORWARD", "DROP", ["-i", "eth0", "-s", str(self._client_subnet_ipv6), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
 
         # allow localhost to access everything
-        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         iptables_add( "INPUT", "ACCEPT", ["-i", "lo"])
         ip6tables_add("INPUT", "ACCEPT", ["-i", "lo"])
 
         # allow IPSec related traffic
-        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         iptables_add( "INPUT", "ACCEPT", ["-p", "udp", "--dport", "500"])
         iptables_add( "INPUT", "ACCEPT", ["-p", "udp", "--dport", "4500"])
         iptables_add( "INPUT", "ACCEPT", ["-p", "esp"])
@@ -323,7 +328,7 @@ class StrongSwan(Service):
         ip6tables_add("INPUT", "ACCEPT", ["-p", "esp"])
 
         # allow packets that belong to already existing connections
-        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         iptables_add( "INPUT",   "DROP",   ["-m", "conntrack", "--ctstate", "INVALID"])
         iptables_add( "INPUT",   "ACCEPT", ["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED"])
         iptables_add( "FORWARD", "DROP",   ["-m", "conntrack", "--ctstate", "INVALID"])
@@ -334,20 +339,20 @@ class StrongSwan(Service):
         ip6tables_add("FORWARD", "ACCEPT", ["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED"])
 
         # allow VPN clients to access the DNS server
-        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         iptables_add( "INPUT", "ACCEPT", ["-p", "udp", "-s", str(self._client_subnet_ipv4), "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
         iptables_add( "INPUT", "ACCEPT", ["-p", "tcp", "-s", str(self._client_subnet_ipv4), "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
         ip6tables_add("INPUT", "ACCEPT", ["-p", "udp", "-s", str(self._client_subnet_ipv6), "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
         ip6tables_add("INPUT", "ACCEPT", ["-p", "tcp", "-s", str(self._client_subnet_ipv6), "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
 
         # block packets between VPN clients (if requested)
-        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         if not self._allow_interclient_communication:
             iptables_add( "FORWARD", "DROP", ["-s", str(self._client_subnet_ipv4), "-d", str(self._client_subnet_ipv4)])
             ip6tables_add("FORWARD", "DROP", ["-s", str(self._client_subnet_ipv6), "-d", str(self._client_subnet_ipv6)])
 
         # allow ICMP packets
-        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
 
         # ICMP Type | INPUT | FORWARD | Description
         # -----------------------------------------------------------------------------------------
@@ -431,13 +436,32 @@ class StrongSwan(Service):
         ip6tables_add("AllowICMP_F", "DROP")
         ip6tables_add("FORWARD", "AllowICMP_F", ["-p", "icmpv6"])
 
-        # allow VPN clients to initiate new connections (connections from the internet to clients are blocked)
-        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        iptables_add( "FORWARD", "ACCEPT", ["-s", str(self._client_subnet_ipv4), "-m", "conntrack", "--ctstate", "NEW", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
-        ip6tables_add("FORWARD", "ACCEPT", ["-s", str(self._client_subnet_ipv6), "-m", "conntrack", "--ctstate", "NEW", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
+        # allow VPN clients to initiate new connections
+        # -------------------------------------------------------------------------------------------------------------
+        iptables_add("FORWARD", "ACCEPT", [
+                     "-s", str(self._client_subnet_ipv4),
+                     "-m", "conntrack", "--ctstate", "NEW",
+                     "-m", "policy", "--dir", "in", "--pol", "ipsec"])
+
+        ip6tables_add("FORWARD", "ACCEPT", [
+                      "-s", str(self._client_subnet_ipv6),
+                      "-m", "conntrack", "--ctstate", "NEW",
+                      "-m", "policy", "--dir", "in", "--pol", "ipsec"])
+
+        # allow packets that initiate new connections from the internet to VPN clients, if protection is disabled
+        # -------------------------------------------------------------------------------------------------------------
+        if not self._protect_clients_from_internet:
+
+            iptables_add("FORWARD", "ACCEPT", [
+                         "-d", str(self._client_subnet_ipv4),
+                         "-m", "conntrack", "--ctstate", "NEW"])
+
+            ip6tables_add("FORWARD", "ACCEPT", [
+                          "-d", str(self._client_subnet_ipv6),
+                          "-m", "conntrack", "--ctstate", "NEW"])
 
         # drop everything else
-        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         iptables_add( "INPUT",   "DROP")
         iptables_add( "FORWARD", "DROP")
         ip6tables_add("INPUT",   "DROP")
@@ -452,7 +476,7 @@ class StrongSwan(Service):
         # Many tunnel implementation use a tunnel MTU of 1400 bytes, so the following MSS values should be reasonable:
         # - TCP MSS (IPv4): 1400 bytes (tunnel MTU) - 20 bytes (IPv4 header) - 20 bytes (TCP header) = 1360 bytes
         # - TCP MSS (IPv6): 1400 bytes (tunnel MTU) - 40 bytes (IPv6 header) - 20 bytes (TCP header) = 1340 bytes
-        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         iptables_run([ "-t", "mangle",
                        "-A", "FORWARD",
                        "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
@@ -469,8 +493,8 @@ class StrongSwan(Service):
                        "-m", "tcpmss", "--mss", "1341:1500",
                        "-j", "TCPMSS", "--set-mss", "1340"])
 
-        # configure masquerading to allow clients to access the internet, if requested
-        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        # configure masquerading to allow clients to access the internet
+        # -------------------------------------------------------------------------------------------------------------
 
         Log.write_note("=> Enabling masquerading for IPv4")
 
@@ -504,7 +528,7 @@ class StrongSwan(Service):
                           "-o", "eth0"])
 
         # remount /proc/sys read-only again
-        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------------------
         Log.write_note("Remounting /proc/sys read-only...")
         run(["mount", "-o", "remount,ro", "/proc/sys"], check=True, stdout=DEVNULL)
 

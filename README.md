@@ -86,7 +86,7 @@ The container needs a few additional capabilities to work properly. The `NET_ADM
 
 At last the container specific setting `VPN_HOSTNAMES` tells the container under which FQDNs the strongswan container will be seen on the internet. Multiple names can be separated by comma. You should list all names here that are published in the DNS. If you use the internal CA to create a server certificate (which is the default) these names are included in the server certificate.
 
-### Environment Variables
+The container can be configured using the following environment variables:
 
 #### ALLOW_INTERCLIENT_COMMUNICATION
 

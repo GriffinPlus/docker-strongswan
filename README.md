@@ -40,7 +40,7 @@ The container needs your docker host to have IPv6 up and running. Please see [he
 
 ### Step 1 - Configuring a User-Defined Network
 
-One thing to consider is that resolving container names depends on docker's embedded DNS server. The DNS server resolves container names that are in the same user-defined networks as the strongswan container. If you do not already have an user-defined network for public services, you can create a simple bridge network (called *internet* in the example below) and define the subnets, from which docker will allocate ip addresses for containers. Most probably you will have only one IPv4 address for your server, so you should choose a subnet from the site-local ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). Docker takes care of connecting published services to the public IPv4 address of the server. Any IPv6 enabled server today has at least a /64 subnet assigned, so any single container can have its own IPv6 address, network address translation (NAT) is not necessary. Therefore you should choose an IPv6 subnet that is part of the subnet assigned to your server. Docker recommends to use a subnet of at least /80, so it can assign IP addresses by ORing the (virtual) MAC address of the container with the specified subnet.
+One thing to consider is that resolving container names depends on docker's embedded DNS server. The DNS server resolves container names that are in the same user-defined networks as the *strongswan* container. If you do not already have an user-defined network for public services, you can create a simple bridge network (called *internet* in the example below) and define the subnets, from which docker will allocate ip addresses for containers. Most probably you will have only one IPv4 address for your server, so you should choose a subnet from the site-local ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). Docker takes care of connecting published services to the public IPv4 address of the server. Any IPv6 enabled server today has at least a /64 subnet assigned, so any single container can have its own IPv6 address, network address translation (NAT) is not necessary. Therefore you should choose an IPv6 subnet that is part of the subnet assigned to your server. Docker recommends to use a subnet of at least /80, so it can assign IP addresses by ORing the (virtual) MAC address of the container with the specified subnet.
 ```
 docker network create -d bridge \
   --subnet 192.168.0.0/24 \
@@ -51,7 +51,7 @@ docker network create -d bridge \
 
 ### Step 2 - Create a Volume for the StrongSwan Container
 
-The strongswan container generates some data (e.g. keys, certificates, settings) that must be persisted. If you are familiar with docker you can also choose to map the data volume to your host, but *named volumes* are a more natural choice.
+The *strongswan* container generates some data (e.g. keys, certificates, settings) that must be persisted. If you are familiar with docker you can also choose to map the data volume to your host, but *named volumes* are a more natural choice.
 
 You can create a named volume using the following command:
 
@@ -65,9 +65,9 @@ Although the container comes with a set of sensible default settings, some setti
 
 ```
 docker run \
-  --name vpn \
-  --ip6=<ip-address-in-network-internet> \
-  --network internet
+  --name strongswan-vpn \
+  --ip6=2001:xxxx:xxxx:xxxx::2 \
+  --network internet \
   --publish 500:500/udp \
   --publish 4500:4500/udp \
   --volume /lib/modules:/lib/modules:ro \
@@ -79,13 +79,13 @@ docker run \
   cloudycube/strongswan
 ```
 
-This creates and starts a strongswan container with the name *vpn* and attaches it to the user-defined network *internet* that was created at [step 1](#step-1---configuring-a-user-defined-network) using the specified IPv6 address. The IPv6 address must be specified explicitly to ensure that the address is always the same - even, if the container is restarted. This is necessary, if you intend to create DNS records for the VPN server, so clients can use a readable and memorizable hostname instead of a long IPv6 address. The IPv4 address is automatically assigned by docker. Usually there is no need to enforce a certain IPv4 address, because docker maps published ports to the appropriate host interfaces.
+This creates and starts a *strongswan* container with the name *strongswan-vpn* and attaches it to the user-defined network *internet* that was created at [step 1](#step-1---configuring-a-user-defined-network) using the specified IPv6 address. The IPv6 address must be specified explicitly to ensure that the address is always the same - even, if the container is restarted. This is necessary, if you intend to create DNS records for the VPN server, so clients can use a readable and memorizable hostname instead of a long IPv6 address. The IPv4 address is automatically assigned by docker. Usually there is no need to enforce a certain IPv4 address, because docker maps published ports to the appropriate host interfaces.
 
-The ports 500 (ISAKMP) and 4500 (NAT-Traversal) are published to tell docker to map these ports to all host interfaces. It is worth noticing that these port mappings only effect IPv4. IPv6 is not influenced by docker, so there is no filtering or firewalling done! The strongswan container takes care of this and implements a firewall to protect itself and connected VPN clients.
+The ports 500 (ISAKMP) and 4500 (NAT-Traversal) are published to tell docker to map these ports to all host interfaces. It is worth noticing that these port mappings only effect IPv4. IPv6 is not influenced by docker, so there is no filtering or firewalling done! The *strongswan* container takes care of this and implements a firewall to protect itself and connected VPN clients.
 
 The container needs a few additional capabilities to work properly. The `NET_ADMIN` capability is needed to configure network interfaces and the firewall (iptables). The `SYS_MODULE` capability is needed to load kernel modules that are required for operation. The `SYS_ADMIN` capability is needed to remount the `/proc/sys` filesystem as read-write, so `sysctl` can configure network related settings. You can withdraw the `SYS_MODULE` capability and remove mapping `/lib/modules` into the container, if the `af_key` module is loaded when the container starts.
 
-At last the container specific setting `VPN_HOSTNAMES` tells the container under which FQDNs the strongswan container will be seen on the internet. Multiple names can be separated by comma. You should list all names here that are published in the DNS. If you use the internal CA to create a server certificate (which is the default) these names are included in the server certificate.
+At last the container specific setting `VPN_HOSTNAMES` tells the container under which FQDNs the *strongswan* container will be seen on the internet. Multiple names can be separated by comma. You should list all names here that are published in the DNS. If you use the internal CA to create a server certificate (which is the default) these names are included in the server certificate.
 
 The container can be configured using the following environment variables:
 
@@ -141,7 +141,7 @@ Determines whether VPN clients can be accessed from the public internet, i.e. wh
 - `true`, `1` => VPN clients are protected, i.e. they cannot be accessed from the public internet.
 - `false`, `0` => VPN clients are not protected, i.e. they can be accessed from the public internet.
 
-Default Value: `True`
+Default Value: `true`
 
 #### STARTUP_VERBOSITY
 
@@ -177,3 +177,15 @@ Default Value: `true`
 Determines the fully qualified hostnames of the VPN server. The internal Certificate Authority will create a server certificate for these hostnames telling clients that they are connected to the desired VPN server. Multiple hostnames must be separated by comma.
 
 Default Value: *hostname of the container*
+
+### Step 4 - Attach Container to Additional Networks 
+
+At this stage the *strongswan* container should be able to accept VPN connections and allow VPN clients to access containers that are in the same user-defined network as the *strongswan* container. You can attach the *strongswan* container (named *strongswan-vpn*) to additional user-defined networks, so VPN clients can access them as well: 
+
+```
+docker network connect <network> strongswan-vpn
+```
+
+### Step 5 - Manage VPN Clients
+
+TODO

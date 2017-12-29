@@ -12,7 +12,7 @@ Forks](https://img.shields.io/github/forks/cloudycube/docker-strongswan.svg?labe
 
 
 ## Overview
-This is a Docker image deriving from the [base-supervisor](https://github.com/cloudycube/docker-base-supervisor) image. It adds the popular VPN software [StrongSwan](https://www.strongswan.org/) that allows you to create a VPN tunnel from common IKEv2 capable IPSec VPN clients right into your Docker stack. This can be useful, if you want to access your services remotely, but don't want your services (especially administration panels) to be visible on the public internet. This greatly reduces attack vectors malicious people can use to gain access to your system.
+This is a Docker image deriving from the [base-supervisor](https://github.com/cloudycube/docker-base-supervisor) image. It adds the popular VPN software [StrongSwan](https://www.strongswan.org/) that allows you to create a VPN tunnel from common IKEv2 capable IPSec VPN clients right into your Docker stack. It can be useful, if you want to access your services remotely, but don't want your services (especially administration panels) to be visible on the public internet. This greatly reduces attack vectors malicious people can use to gain access to your system.
 
 The image provides the following features:
 - Dual-Stack Tunnel Broker (IPv4-over-IPv4, IPv4-over-IPv6, IPv6-over-IPv4, IPv6-over-IPv4)
@@ -40,7 +40,7 @@ The container needs your docker host to have IPv6 up and running. Please see [he
 
 ### Step 1 - Configuring a User-Defined Network
 
-One thing to consider is that resolving container names depends on docker's embedded DNS server. The DNS server resolves container names that are in the same user-defined networks as the strongswan container. If you do not already have an user-defined network for public services, you can create a simple bridge network (called *internet* in the example below) and define the subnets, from which docker will allocate ip addresses for containers. Most probably you will have only one IPv4 address for your server, so you should choose a subnet from the site-local ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). Docker takes care of connecting published services to the public IPv4 address of the server. Any IPv6 enabled server today has at least a /64 subnet assigned, so any single container can have its own IPv6 address, network address translation (NAT) is not necessary. Therefore you should choose an IPV6 subnet that is part of the subnet assigned to your server. Docker recommends to use a subnet of at least /80, so it can assign IP addresses by ORing the (virtual) MAC address of the container with the specified subnet.
+One thing to consider is that resolving container names depends on docker's embedded DNS server. The DNS server resolves container names that are in the same user-defined networks as the strongswan container. If you do not already have an user-defined network for public services, you can create a simple bridge network (called *internet* in the example below) and define the subnets, from which docker will allocate ip addresses for containers. Most probably you will have only one IPv4 address for your server, so you should choose a subnet from the site-local ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). Docker takes care of connecting published services to the public IPv4 address of the server. Any IPv6 enabled server today has at least a /64 subnet assigned, so any single container can have its own IPv6 address, network address translation (NAT) is not necessary. Therefore you should choose an IPv6 subnet that is part of the subnet assigned to your server. Docker recommends to use a subnet of at least /80, so it can assign IP addresses by ORing the (virtual) MAC address of the container with the specified subnet.
 ```
 docker network create -d bridge \
   --subnet 192.168.0.0/24 \
@@ -112,15 +112,15 @@ Determines the subnet from which IPv6 addresses are assigned to VPN clients. The
 
 ##### Unique Unicast Addresses (ULA)
 
-A subnet in the ULA range has the benefit that these IP addresses are not visible on the public internet. The IP addresses are only used by the VPN server and its clients to communicate with each other. There is no additional setup needed to get it working. Any communication with the public internet is done using *Masquerading*, a network address translation (NAT) technique that replaces internal IP addresses with the IP address of the VPN server for connections to the public internet. Although masquerading works really well for most protocols it can cause strange effects with some protocols, especially when multiple clients using the same protocol are involved. A tiny plus of using masquerading is that the IP address of a VPN client cannot be determined by visited sites as the IP address of the VPN server is used as the sender address in packets.
+A subnet in the ULA range has the benefit that these IP addresses are not visible on the public internet. The IP addresses are only used by the VPN server and its clients to communicate with each other. There is no additional setup needed to get it working. Any communication with the public internet is done using *Masquerading*, a network address translation (NAT) technique that replaces internal IP addresses with the IP address of the VPN server for connections to the public internet. Although masquerading works really well for most protocols it can cause strange effects with some protocols, especially when multiple clients using the same protocol are involved. A tiny plus of using masquerading is that the IP address of a VPN client cannot be determined by visited sites as the IP address of the VPN server is used as the source address in packets.
 
 You should consider [RFC 4193](https://tools.ietf.org/html/rfc4193) for details on how to choose a proper subnet from the ULA range. To cut a long story short, you should use the "randomly" generated approach (fd00::/8) and build the prefix using the following blueprint: `fdxx xxxx xxxx yyyy zzzz zzzz zzzz zzzz`, where *x* is a random site id, *y* is a random subnet id within the site and *z* is the hosts part within that subnet. This guarantees that the chosen subnet does not conflict with global addresses and makes it very unlikely to conflict with other subnets at your site.
 
 ##### Global Unicast Addresses (GUA)
 
-A subnet in the GUA range has the benefit that VPN clients have direct access to the public internet and no network address translation (NAT) is needed that might cause issues with some protocols. By default new connections from the public internet to VPN clients are blocked by the internal firewall. Please see [PROTECT_CLIENTS_FROM_INTERNET](#protect-clients-from-internet) for details on how to disable this protection.
+A subnet in the GUA range has the benefit that VPN clients have direct access to the public internet and no network address translation (NAT) is needed that might cause issues with some protocols. By default new connections from the public internet to VPN clients are blocked by the internal firewall. Please see [PROTECT_CLIENTS_FROM_INTERNET](#protect_clients_from_internet) for details on how to disable this protection.
 
-In order to use a GUA subnet you must configure your host to forward packets that belong to the specified subnet to the container, otherwise internet access will not work:
+In order to use a GUA subnet you must configure your host to forward packets that are adressed to the specified subnet to the container, otherwise internet access will not work:
 ```
 ip -6 route add <client-subnet> via <container-ip>
 ```
@@ -173,6 +173,6 @@ Default Value: `true`
 
 #### VPN_HOSTNAMES
 
-Determines the fully qualified hostnames of the VPN server. The internal Certificate Authority will create a server certificate for these hostnames telling clients that they are connected to the desired VPN server. Multiple hostnames must be comma-separated.
+Determines the fully qualified hostnames of the VPN server. The internal Certificate Authority will create a server certificate for these hostnames telling clients that they are connected to the desired VPN server. Multiple hostnames must be separated by comma.
 
 Default Value: *hostname of the container*

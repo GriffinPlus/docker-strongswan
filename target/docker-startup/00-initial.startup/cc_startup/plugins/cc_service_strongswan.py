@@ -8,10 +8,9 @@ import os
 import re
 import socket
 
-from ipaddress import IPv4Network, IPv6Network, AddressValueError, NetmaskValueError
+from netaddr import IPAddress, IPNetwork, AddrFormatError
 from mako.template import Template
 from OpenSSL import crypto, SSL
-# from stat import S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP, S_IROTH, S_IWOTH
 from subprocess import run, DEVNULL
 from ..cc_helpers import read_text_file, write_text_file, \
                          get_env_setting_bool, get_env_setting_integer, get_env_setting_string, \
@@ -43,8 +42,8 @@ NDPPD_CONF_TEMPLATE_PATH         = "/etc/ndppd.conf.mako"
 SUPERVISORD_NDPPD_CONF_PATH      = "/etc/supervisor/conf.d/ndppd.conf"
 
 # IP Addresses
-IPV6_NETWORK_GUA                 = IPv6Network("2000::/3")
-IPV6_NETWORK_SITE_LOCAL          = IPv6Network("fc00::/7")
+IPV6_NETWORK_GUA                 = IPNetwork("2000::/3")
+IPV6_NETWORK_SITE_LOCAL          = IPNetwork("fc00::/7")
 
 # ---------------------------------------------------------------------------------------------------------------------
 
@@ -65,7 +64,9 @@ def get_service():
     return StrongSwan()
 
 
-# ---------------------------------------------------------------------------------------------------------------------
+###################################################################################################################################################################################
+# Service Class
+###################################################################################################################################################################################
 
 
 class StrongSwan(Service):
@@ -89,35 +90,40 @@ class StrongSwan(Service):
         # -----------------------------------------------------------------------------------------
         self._vpn_hostnames = get_env_setting_string("VPN_HOSTNAMES", socket.gethostname())
         self._vpn_hostnames = [ s.strip() for s in self._vpn_hostnames.split(",") ]
+
 # TODO: add validation
 
         # CLIENT_SUBNET_IPV4
         # -----------------------------------------------------------------------------------------
         self._client_subnet_ipv4 = get_env_setting_string("CLIENT_SUBNET_IPV4", "10.0.0.0/24")
         try:
-            self._client_subnet_ipv4 = IPv4Network(self._client_subnet_ipv4)
-        except (AddressValueError, NetmaskValueError):
+            self._client_subnet_ipv4 = IPNetwork(self._client_subnet_ipv4)
+        except AddrFormatError:
             Log.write_error("The specified network ({0}) is not a valid IPv4 network.", self._client_subnet_ipv4)
             raise
 
         # CLIENT_SUBNET_IPV6
-        # (must be either in the Global Unique Address (GUA) range or in the site-local range)
+        # (must be either in the Global Unicast Address (GUA) range or in the site-local range)
         # -----------------------------------------------------------------------------------------
-        self._client_subnet_ipv6 = get_env_setting_string("CLIENT_SUBNET_IPV6", "fd00:DEAD:BEEF::/112")
+
+        # read environment variable
+        self._client_subnet_ipv6 = get_env_setting_string("CLIENT_SUBNET_IPV6", "fd00:DEAD:BEEF:AFFE::/64")
         try:
-            self._client_subnet_ipv6 = IPv6Network(self._client_subnet_ipv6)
-        except (AddressValueError, NetmaskValueError):
+            self._client_subnet_ipv6 = IPNetwork(self._client_subnet_ipv6)
+        except AddrFormatError:
             Log.write_error("The specified network ({0}) is not a valid IPv6 network.", self._client_subnet_ipv6)
             raise
-        if self._client_subnet_ipv6.overlaps(IPV6_NETWORK_GUA):
+
+        # check whether the specified subnet belongs is in the GUA range or the ULA range
+        if self._client_subnet_ipv6.is_unicast() and not self._client_subnet_ipv6.is_private():
             self._client_subnet_ipv6_is_gua = True
             self._client_subnet_ipv6_is_site_local = False
-        elif self._client_subnet_ipv6.overlaps(IPV6_NETWORK_SITE_LOCAL):
+        elif self._client_subnet_ipv6.is_private():
             self._client_subnet_ipv6_is_gua = False
             self._client_subnet_ipv6_is_site_local = True
         else:
             Log.write_error("The specified network ({0}) is neither in the GUA range ({1}) nor in the site-local range ({2}).",
-                            self._client_subnet_ipv6.with_prefixlen, IPV6_NETWORK_GUA.with_prefixlen, IPV6_NETWORK_SITE_LOCAL.with_prefixlen)
+                            str(self._client_subnet_ipv6), str(IPV6_NETWORK_GUA), str(IPV6_NETWORK_SITE_LOCAL))
             raise RuntimeError()
 
         # USE_DOCKER_DNS
@@ -129,6 +135,7 @@ class StrongSwan(Service):
         if self._use_docker_dns: self._dns_servers = "127.0.0.11"
         else:                    self._dns_servers = get_env_setting_string("DNS SERVERS", "8.8.8.8, 8.8.4.4, 2001:4860:4860::8888, 2001:4860:4860::8844")
         self._dns_servers = [ s.strip() for s in self._dns_servers.split(",") ]
+
 # TODO: add validation
 
         # ALLOW_INTERNET_ACCESS
@@ -175,23 +182,19 @@ class StrongSwan(Service):
         # -----------------------------------------------------------------------------------------
 
         # IPv4
-        for (index, host_ip) in enumerate(self._client_subnet_ipv4.hosts()):
-            if index == 0:
-                self._own_ip_in_client_subnet_ipv4 = str(host_ip)
-            elif index == 1:
-                self._client_ip_range_start_ipv4 = str(host_ip)
-            else:
-                self._client_ip_range_end_ipv4 = str(host_ip)
+        self._own_ip_in_client_subnet_ipv4 = self._client_subnet_ipv4[1]
+        self._client_ip_range_start_ipv4 = self._client_subnet_ipv4[2]
+        self._client_ip_range_end_ipv4 = self._client_subnet_ipv4[-1]
 
         # IPv6
-        for (index, host_ip) in enumerate(self._client_subnet_ipv6.hosts()):
-            if index == 0:
-                self._own_ip_in_client_subnet_ipv6 = str(host_ip)
-            elif index == 1:
-                self._client_ip_range_start_ipv6 = str(host_ip)
-            else:
-                self._client_ip_range_end_ipv6 = str(host_ip)
-
+        effective_client_subnet_ipv6 = self._client_subnet_ipv6
+        if self._client_subnet_ipv6.prefixlen < 96:
+          # subnet is too large, strongswan can only handle subnets up to /96 => use a smaller subnet
+          effective_client_subnet_ipv6 = next(effective_client_subnet_ipv6.subnet(96))
+          
+        self._own_ip_in_client_subnet_ipv6 = effective_client_subnet_ipv6[1]
+        self._client_ip_range_start_ipv6 = effective_client_subnet_ipv6[2]
+        self._client_ip_range_end_ipv6 = effective_client_subnet_ipv6[-1]
 
         # prepare context for the template engine that will generate strongswan.conf and ipsec.conf
         # -----------------------------------------------------------------------------------------
@@ -254,11 +257,11 @@ class StrongSwan(Service):
 
         # add a dummy device with an ip address for the vpn server in the client network
         run(["ip", "link", "add", "type", "dummy"], check=True, stdout=DEVNULL)
-        run(["ip", "addr", "add", self._own_ip_in_client_subnet_ipv4 + "/" + str(self._client_subnet_ipv4.prefixlen), "dev", "dummy0"], check=True, stdout=DEVNULL)
-        run(["ip", "addr", "add", self._own_ip_in_client_subnet_ipv6 + "/" + str(self._client_subnet_ipv6.prefixlen), "dev", "dummy0"], check=True, stdout=DEVNULL)
+        run(["ip", "addr", "add", str(self._own_ip_in_client_subnet_ipv4) + "/" + str(self._client_subnet_ipv4.prefixlen), "dev", "dummy0"], check=True, stdout=DEVNULL)
+        run(["ip", "addr", "add", str(self._own_ip_in_client_subnet_ipv6) + "/" + str(self._client_subnet_ipv6.prefixlen), "dev", "dummy0"], check=True, stdout=DEVNULL)
         run(["ip", "link", "set", "up", "dummy0"], check=True, stdout=DEVNULL)
-        run(["ip", "route", "add", self._own_ip_in_client_subnet_ipv4, "dev", "dummy0"], check=True, stdout=DEVNULL)
-        run(["ip", "route", "add", self._own_ip_in_client_subnet_ipv6, "dev", "dummy0"], check=True, stdout=DEVNULL)
+        run(["ip", "route", "add", str(self._own_ip_in_client_subnet_ipv4), "dev", "dummy0"], check=True, stdout=DEVNULL)
+        run(["ip", "route", "add", str(self._own_ip_in_client_subnet_ipv6), "dev", "dummy0"], check=True, stdout=DEVNULL)
 
         # enable forwarding
         run(["sysctl", "-w", "net.ipv4.ip_forward=1"], check=True, stdout=DEVNULL)
@@ -283,8 +286,6 @@ class StrongSwan(Service):
 
         Log.write_note("=> Configuring firewall")
 
-        ip6tables_add("INPUT", "ACCEPT")
-
         # filter all packets that have RH0 headers (deprecated, can be used for DoS attacks)
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
         ip6tables_add("INPUT",   "DROP", ["-m", "rt", "--rt-type", "0"], "RH0 Exploit Protection")
@@ -301,10 +302,10 @@ class StrongSwan(Service):
         ip6tables_add("FORWARD", "DROP", ["!", "-i", "lo", "-s", "::1/128"],     "Anti-Spoofing")
 
         # prevent attacker from using a VPN client address as source address
-        iptables_add( "INPUT",   "DROP", ["-i", "eth0", "-s", self._client_subnet_ipv4.with_prefixlen, "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
-        iptables_add( "FORWARD", "DROP", ["-i", "eth0", "-s", self._client_subnet_ipv4.with_prefixlen, "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
-        ip6tables_add("INPUT",   "DROP", ["-i", "eth0", "-s", self._client_subnet_ipv6.with_prefixlen, "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
-        ip6tables_add("FORWARD", "DROP", ["-i", "eth0", "-s", self._client_subnet_ipv6.with_prefixlen, "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
+        iptables_add( "INPUT",   "DROP", ["-i", "eth0", "-s", str(self._client_subnet_ipv4), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
+        iptables_add( "FORWARD", "DROP", ["-i", "eth0", "-s", str(self._client_subnet_ipv4), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
+        ip6tables_add("INPUT",   "DROP", ["-i", "eth0", "-s", str(self._client_subnet_ipv6), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
+        ip6tables_add("FORWARD", "DROP", ["-i", "eth0", "-s", str(self._client_subnet_ipv6), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
 
         # allow localhost to access everything
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -333,16 +334,16 @@ class StrongSwan(Service):
 
         # allow VPN clients to access the DNS server
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        iptables_add( "INPUT", "ACCEPT", ["-p", "udp", "-s", self._client_subnet_ipv4.with_prefixlen, "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
-        iptables_add( "INPUT", "ACCEPT", ["-p", "tcp", "-s", self._client_subnet_ipv4.with_prefixlen, "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
-        ip6tables_add("INPUT", "ACCEPT", ["-p", "udp", "-s", self._client_subnet_ipv6.with_prefixlen, "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
-        ip6tables_add("INPUT", "ACCEPT", ["-p", "tcp", "-s", self._client_subnet_ipv6.with_prefixlen, "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
+        iptables_add( "INPUT", "ACCEPT", ["-p", "udp", "-s", str(self._client_subnet_ipv4), "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
+        iptables_add( "INPUT", "ACCEPT", ["-p", "tcp", "-s", str(self._client_subnet_ipv4), "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
+        ip6tables_add("INPUT", "ACCEPT", ["-p", "udp", "-s", str(self._client_subnet_ipv6), "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
+        ip6tables_add("INPUT", "ACCEPT", ["-p", "tcp", "-s", str(self._client_subnet_ipv6), "--dport", "53", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
 
         # block packets between VPN clients (if requested)
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
         if not self._allow_interclient_communication:
-            iptables_add( "FORWARD", "DROP", ["-s", self._client_subnet_ipv4.with_prefixlen, "-d", self._client_subnet_ipv4.with_prefixlen])
-            ip6tables_add("FORWARD", "DROP", ["-s", self._client_subnet_ipv6.with_prefixlen, "-d", self._client_subnet_ipv6.with_prefixlen])
+            iptables_add( "FORWARD", "DROP", ["-s", str(self._client_subnet_ipv4), "-d", str(self._client_subnet_ipv4)])
+            ip6tables_add("FORWARD", "DROP", ["-s", str(self._client_subnet_ipv6), "-d", str(self._client_subnet_ipv6)])
 
         # allow ICMP packets
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -360,7 +361,7 @@ class StrongSwan(Service):
         iptables_run(["-N", "AllowICMP_I"])
         iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "0"])
         iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "3"])
-        iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "8", "-m", "limit", "--limit", "1/sec", "--limit-burst", "10"])
+        iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "8", "-m", "limit", "--limit", "5/sec", "--limit-burst", "20"])
         iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "11"])
         iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "12"])
         iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "30"])
@@ -370,7 +371,7 @@ class StrongSwan(Service):
         iptables_run(["-N", "AllowICMP_F"])
         iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "0"])
         iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "3"])
-        iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "8", "-m", "limit", "--limit", "1/sec", "--limit-burst", "10"])
+        iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "8", "-m", "limit", "--limit", "5/sec", "--limit-burst", "20"])
         iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "11"])
         iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "12"])
         iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "30"])
@@ -401,7 +402,7 @@ class StrongSwan(Service):
         ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "2"])
         ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "3"])
         ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "4"])
-        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "128", "-m", "limit", "--limit", "1/sec", "--limit-burst", "10"])
+        ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "128", "-m", "limit", "--limit", "5/sec", "--limit-burst", "10"])
         ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "129"])
         ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "130"])
         ip6tables_add("AllowICMP_I", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "131"])
@@ -421,7 +422,7 @@ class StrongSwan(Service):
         ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "2"])
         ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "3"])
         ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "4"])
-        ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "128", "-m", "limit", "--limit", "1/sec", "--limit-burst", "10"])
+        ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "128", "-m", "limit", "--limit", "5/sec", "--limit-burst", "10"])
         ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "129"])
         ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "130"])
         ip6tables_add("AllowICMP_F", "ACCEPT", ["-p", "icmpv6", "--icmpv6-type", "131"])
@@ -431,8 +432,8 @@ class StrongSwan(Service):
 
         # allow VPN clients to initiate new connections (connections from the internet to clients are blocked)
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        iptables_add( "FORWARD", "ACCEPT", ["-s", self._client_subnet_ipv4.with_prefixlen, "-m", "conntrack", "--ctstate", "NEW", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
-        ip6tables_add("FORWARD", "ACCEPT", ["-s", self._client_subnet_ipv6.with_prefixlen, "-m", "conntrack", "--ctstate", "NEW", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
+        iptables_add( "FORWARD", "ACCEPT", ["-s", str(self._client_subnet_ipv4), "-m", "conntrack", "--ctstate", "NEW", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
+        ip6tables_add("FORWARD", "ACCEPT", ["-s", str(self._client_subnet_ipv6), "-m", "conntrack", "--ctstate", "NEW", "-m", "policy", "--dir", "in", "--pol", "ipsec"])
 
         # drop everything else
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -454,7 +455,7 @@ class StrongSwan(Service):
         iptables_run([ "-t", "mangle",
                        "-A", "FORWARD",
                        "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
-                       "-s", self._client_subnet_ipv4.with_prefixlen,
+                       "-s", str(self._client_subnet_ipv4),
                        "-m", "policy", "--dir", "in", "--pol", "ipsec",
                        "-m", "tcpmss", "--mss", "1361:1500",
                        "-j", "TCPMSS", "--set-mss", "1360"])
@@ -462,7 +463,7 @@ class StrongSwan(Service):
         ip6tables_run(["-t", "mangle",
                        "-A", "FORWARD",
                        "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
-                       "-s", self._client_subnet_ipv6.with_prefixlen,
+                       "-s", str(self._client_subnet_ipv6),
                        "-m", "policy", "--dir", "in", "--pol", "ipsec",
                        "-m", "tcpmss", "--mss", "1341:1500",
                        "-j", "TCPMSS", "--set-mss", "1340"])
@@ -475,13 +476,13 @@ class StrongSwan(Service):
 
             iptables_add("POSTROUTING", "ACCEPT", [
                          "-t", "nat",
-                         "-s", self._client_subnet_ipv4.with_prefixlen,
+                         "-s", str(self._client_subnet_ipv4),
                          "-o", "eth0",
                          "-m", "policy", "--dir", "out", "--pol", "ipsec"])
 
             iptables_add("POSTROUTING", "MASQUERADE", [
                          "-t", "nat",
-                         "-s", self._client_subnet_ipv4.with_prefixlen,
+                         "-s", str(self._client_subnet_ipv4),
                          "-o", "eth0"])
 
             if self._client_subnet_ipv6_is_site_local:
@@ -491,13 +492,13 @@ class StrongSwan(Service):
 
                 ip6tables_add("POSTROUTING", "ACCEPT", [
                               "-t", "nat",
-                              "-s", self._client_subnet_ipv6.with_prefixlen,
+                              "-s", str(self._client_subnet_ipv6),
                               "-o", "eth0",
                               "-m", "policy", "--dir", "out", "--pol", "ipsec"])
 
                 ip6tables_add("POSTROUTING", "MASQUERADE", [
                               "-t", "nat",
-                              "-s", self._client_subnet_ipv6.with_prefixlen,
+                              "-s", str(self._client_subnet_ipv6),
                               "-o", "eth0"])
 
 
@@ -528,7 +529,7 @@ class StrongSwan(Service):
 
         # log the certificate of the VPN server
         dump = crypto.dump_certificate(crypto.FILETYPE_TEXT, self._server_cert).decode('utf-8')
-        Log.write_note("Certificate of the VPN server\n{1}\n{0}\n{1}".format(dump, SEPARATOR_LINE))
+        Log.write_note("Certificate of the VPN server\n{1}\n{0}\n{1}", dump, SEPARATOR_LINE)
 
     # ---------------------------------------------------------------------------------------------------------------------
 
@@ -537,3 +538,9 @@ class StrongSwan(Service):
         """
 
         pass
+
+
+###################################################################################################################################################################################
+# Helper functions
+###################################################################################################################################################################################
+

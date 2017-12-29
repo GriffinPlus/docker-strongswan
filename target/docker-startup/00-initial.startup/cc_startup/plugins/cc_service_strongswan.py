@@ -138,10 +138,6 @@ class StrongSwan(Service):
 
 # TODO: add validation
 
-        # ALLOW_INTERNET_ACCESS
-        # -----------------------------------------------------------------------------------------
-        self._allow_internet_access = get_env_setting_bool("ALLOW_INTERNET_ACCESS", True)
-
         # ALLOW_INTERCLIENT_COMMUNICATION
         # -----------------------------------------------------------------------------------------
         self._allow_interclient_communication = get_env_setting_bool("ALLOW_INTERCLIENT_COMMUNICATION", False)
@@ -250,8 +246,13 @@ class StrongSwan(Service):
         if not self._client_subnet_ipv6_is_gua:
             os.rename(SUPERVISORD_NDPPD_CONF_PATH, SUPERVISORD_NDPPD_CONF_PATH + ".inactive")
 
-        # configure networking
+        # remount /proc/sys read-write to enable 'sysctl' to work properly
         # -----------------------------------------------------------------------------------------
+        Log.write_note("Remounting /proc/sys read-write...")
+        run(["mount", "-o", "remount,rw", "/proc/sys"], check=True, stdout=DEVNULL)
+
+        # configure networking
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
         Log.write_note("Configuring networking...")
 
@@ -470,36 +471,42 @@ class StrongSwan(Service):
 
         # configure masquerading to allow clients to access the internet, if requested
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        if self._allow_internet_access:
 
-            Log.write_note("=> Enabling internet access")
+        Log.write_note("=> Enabling masquerading for IPv4")
 
-            iptables_add("POSTROUTING", "ACCEPT", [
-                         "-t", "nat",
-                         "-s", str(self._client_subnet_ipv4),
-                         "-o", "eth0",
-                         "-m", "policy", "--dir", "out", "--pol", "ipsec"])
+        iptables_add("POSTROUTING", "ACCEPT", [
+                     "-t", "nat",
+                     "-s", str(self._client_subnet_ipv4),
+                     "-o", "eth0",
+                     "-m", "policy", "--dir", "out", "--pol", "ipsec"])
 
-            iptables_add("POSTROUTING", "MASQUERADE", [
-                         "-t", "nat",
-                         "-s", str(self._client_subnet_ipv4),
-                         "-o", "eth0"])
+        iptables_add("POSTROUTING", "MASQUERADE", [
+                     "-t", "nat",
+                     "-s", str(self._client_subnet_ipv4),
+                     "-o", "eth0"])
 
-            if self._client_subnet_ipv6_is_site_local:
+        if self._client_subnet_ipv6_is_site_local:
 
-                # site local network (ip addresses are not valid on the internet)
-                # => enable masquerading
+            # site local network (ip addresses are not valid on the internet)
+            # => enable masquerading
 
-                ip6tables_add("POSTROUTING", "ACCEPT", [
-                              "-t", "nat",
-                              "-s", str(self._client_subnet_ipv6),
-                              "-o", "eth0",
-                              "-m", "policy", "--dir", "out", "--pol", "ipsec"])
+            Log.write_note("=> Enabling masquerading for IPv6")
 
-                ip6tables_add("POSTROUTING", "MASQUERADE", [
-                              "-t", "nat",
-                              "-s", str(self._client_subnet_ipv6),
-                              "-o", "eth0"])
+            ip6tables_add("POSTROUTING", "ACCEPT", [
+                          "-t", "nat",
+                          "-s", str(self._client_subnet_ipv6),
+                          "-o", "eth0",
+                          "-m", "policy", "--dir", "out", "--pol", "ipsec"])
+
+            ip6tables_add("POSTROUTING", "MASQUERADE", [
+                          "-t", "nat",
+                          "-s", str(self._client_subnet_ipv6),
+                          "-o", "eth0"])
+
+        # remount /proc/sys read-only again
+        # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        Log.write_note("Remounting /proc/sys read-only...")
+        run(["mount", "-o", "remount,ro", "/proc/sys"], check=True, stdout=DEVNULL)
 
 
     # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------

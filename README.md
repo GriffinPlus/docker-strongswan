@@ -15,8 +15,7 @@ Forks](https://img.shields.io/github/forks/cloudycube/docker-strongswan.svg?labe
 This is a Docker image deriving from the [base-supervisor](https://github.com/cloudycube/docker-base-supervisor) image. It adds the popular VPN software [StrongSwan](https://www.strongswan.org/) that allows you to create a VPN tunnel from common IKEv2 capable IPSec VPN clients right into your Docker stack. This can be useful, if you want to access your services remotely, but don't want your services (especially administration panels) to be visible on the public internet. This greatly reduces attack vectors malicious people can use to gain access to your system.
 
 The image provides the following features:
-- Full Support for IPv4 and IPv6
-- Support for IKEv2 only
+- Dual-Stack Tunnel Broker (IPv4-over-IPv4, IPv4-over-IPv6, IPv6-over-IPv4, IPv6-over-IPv4)
 - Authentication Methods
   - IKEv2 certificate authentication
   - IKEv2 EAP-TLS (certificate authentication)
@@ -37,15 +36,55 @@ This image belongs to a set of Docker images created for project [CloudyCube](ht
 
 ## Usage
 
-Although the container comes with a set of sensible default settings, it is recommended to set some settings explicitly to suit your needs:
+The container needs your docker host to have IPv6 up and running. Please see [here](https://docs.docker.com/engine/userguide/networking/default_network/ipv6/) for details on how to enable IPv6 support.
+
+### Step 1 - Configuring a User-Defined Network
+
+One thing to consider is that resolving container names depends on docker's embedded DNS server. The DNS server resolves container names that are in the same user-defined networks as the strongswan container. If you do not already have an user-defined network for public services, you can create a simple bridge network (called *internet* in the example below) and define the subnets, from which docker will allocate ip addresses for containers. Most probably you will have only one IPv4 address for your server, so you should choose a subnet from the site-local ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). Docker takes care of connecting published services to the public IPv4 address of the server. Any IPv6 enabled server today has at least a /64 subnet assigned, so any single container can have its own IPv6 address, network address translation (NAT) is not necessary. Therefore you should choose an IPV6 subnet that is part of the subnet assigned to your server. Docker recommends to use a subnet of at least /80, so it can assign IP addresses by ORing the (virtual) MAC address of the container with the specified subnet.
+```
+docker network create -d bridge \
+  --subnet 192.168.0.0/24 \
+  --subnet 2001:xxxx:xxxx:xxxx::/80 \
+  --ipv6 \
+  internet
+```
+
+### Step 2 - Create a Volume for the StrongSwan Container
+
+The strongswan container generates some data (e.g. keys, certificates, settings) that must be persisted. If you are familiar with docker you can also choose to map the data volume to your host, but *named volumes* are a more natural choice.
+
+You can create a named volume using the following command:
+
+```
+docker volume create strongswan-data
+```
+
+### Step 3 - Run the StrongSwan Container
+
+Although the container comes with a set of sensible default settings, some settings still need to be configured to suit your needs:
+
 ```
 docker run \
+  --ip6=<ip-address-in-network-internet> \
+  --network internet
+  --publish 500:500/udp \
+  --publish 4500:4500/udp \
+  --volume /lib/modules:/lib/modules:ro \
+  --volume strongswan-data:/data \
+  --cap-add NET_ADMIN \
+  --cap-add SYS_MODULE \
+  --cap-add SYS_ADMIN \
   --env VPN_HOSTNAMES="vpn.my-domain.com" \
-  --env CLIENT_SUBNET_IPV4="10.0.0.0/24" \
-  --env CLIENT_SUBNET_IPV6="fd00:DEAD:BEEF:AFFE:/64" \
-  cloudycube/strongwan
+  cloudycube/strongswan
 ```
-Please replace the FQDN via which the VPN server is reachable from the internet and the subnets from which client IP addresses are assigned. In the example above the VPN server will take `10.0.0.1` and `fc00:DEAD:BEEF:AFFE:1` as its own internal address and assign the remaining addresses to connecting VPN clients.
+
+This starts the strongswan container and attaches it to the user-defined network *internet* that was created at [step 1](#step-1-configuring-a-user-defined-network) using the specified IPv6 address. The IPv6 address must be specified explicitly to ensure that the address is always the same - even, if the container is restarted. This is necessary, if you intend to create DNS records for the VPN server, so clients can use a readable and memorizable hostname instead of a long IPv6 address. The IPv4 address is automatically assigned by docker. Usually there is no need to enforce a certain IPv4 address, because docker maps published ports to the appropriate host interfaces.
+
+The ports 500 (ISAKMP) and 4500 (NAT-Traversal) are published to tell docker to map these ports to all host interfaces. It is worth noticing that these port mappings only effect IPv4. IPv6 is not influenced by docker, so there is no filtering or firewalling done! The strongswan container takes care of this and implements a firewall to protect itself and connected VPN clients.
+
+The container needs a few additional capabilities to work properly. The `NET_ADMIN` capability is needed to configure network interfaces and the firewall (iptables). The `SYS_MODULE` capability is needed to load kernel modules that are required for operation. The `SYS_ADMIN` capability is needed to remount the `/proc/sys` filesystem as read-write, so `sysctl` can configure network related settings. You can withdraw the `SYS_MODULE` capability and remove mapping `/lib/modules` into the container, if the `af_key` module is loaded when the container starts.
+
+At last the container specific setting `VPN_HOSTNAMES` tells the container under which FQDNs the strongswan container will be seen on the internet. Multiple names can be separated by comma. You should list all names here that are published in the DNS. If you use the internal CA to create a server certificate (which is the default) these names are included in the server certificate.
 
 ### Environment Variables
 

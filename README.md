@@ -26,13 +26,13 @@ The image provides the following features:
 - Internal DNS forwarder provides name resolution services to VPN clients using...
   - Docker's embedded DNS (containers can be accessed by their name)
   - External DNS servers
+- High performance by using NETKEY (kernel-mode IPSec) and the Linux Kernel Crypto API
 - Communication between VPN clients
 - Internet access over the VPN
   - IPv4: Masquerading
   - IPv6: Masquerading / Global Unicast Address (GUA)
 
 This image belongs to a set of Docker images created for project [CloudyCube](https://www.falk-online.eu/projekte/cloudycube). The homepage is in German only, but you will find everything needed to get it working here as well.
-
 
 ## Usage
 
@@ -237,3 +237,25 @@ docker run -it \
   cloudycube/strongswan \
   remove client <id>
 ```
+
+### Step 6 - Extract Certificate of the Internal CA
+
+This step is only necessary, if the VPN server uses a certificate that was issued by the internal CA. If the server uses a certificate that was provided explicitly, you should skip this step as the certificate of the internal CA is not needed by VPN clients to authenticate the server.
+
+If the internal CA was used to create a certificate for the VPN server, clients need to import the certificate of the CA into their certificate storage. The following command extracts the certificate (*ca-cert.pem*) of the internal CA from the container and puts it into the current directory:
+
+```
+docker cp strongswan-vpn:/data/internal_ca/ca-cert.pem .
+```
+
+### Step 7 - Configure Clients
+
+TODO
+
+#### Internal CA created the Server Certificate
+
+TODO
+
+#### External CA created the Server Certificate
+
+TODO

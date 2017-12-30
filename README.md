@@ -84,7 +84,7 @@ This creates and starts a *strongswan* container with the name *strongswan-vpn* 
 
 The ports 500 (ISAKMP) and 4500 (NAT-Traversal) are published to tell docker to map these ports to all host interfaces. It is worth noticing that these port mappings only effect IPv4. IPv6 is not influenced by docker, so there is no filtering or firewalling done! The *strongswan* container takes care of this and implements a firewall to protect itself and connected VPN clients.
 
-The container needs a few additional capabilities to work properly. The `NET_ADMIN` capability is needed to configure network interfaces and the *iptables* firewall. The `SYS_MODULE` capability is needed to load kernel modules that are required for operation. The `SYS_ADMIN` capability is needed to remount the `/proc/sys` filesystem as read-write, so `sysctl` can configure network related settings. You can withdraw the `SYS_MODULE` capability and remove mapping `/lib/modules` into the container, if the `af_key` module is loaded when the container starts. Some *strongswan* modules seem to require some kernel calls that are disabled by docker's default *seccomp* profile, so we need to disable seccomp entirely (at least until it's clear which kernel calls strongswan needs to operate). Although that's not the best approach, it's better than running the container in privileged mode.
+The container needs a few additional capabilities to work properly. The `NET_ADMIN` capability is needed to configure network interfaces and the *iptables* firewall. The `SYS_MODULE` capability is needed to load kernel modules that are required for operation. The `SYS_ADMIN` capability is needed to remount the `/proc/sys` filesystem as read-write, so `sysctl` can configure network related settings. Some *strongswan* modules seem to require kernel calls that are disabled by docker's default *seccomp* profile, so we need to disable seccomp entirely (at least until it's clear which kernel calls strongswan needs to operate). Although that's not the best approach, it's slightly better than running the container in privileged mode.
 
 At last the container specific setting `VPN_HOSTNAMES` tells the container under which FQDNs the *strongswan* container will be seen on the internet. Multiple names can be separated by comma. You should list all names here that are published in the DNS. If you use the internal CA to create a server certificate (which is the default) these names are included in the server certificate.
 
@@ -189,4 +189,51 @@ docker network connect <network> strongswan-vpn
 
 ### Step 5 - Manage VPN Clients
 
+#### Getting Clients
+
 TODO
+
+```
+docker run -it \
+  --volume strongswan-data:/data \
+  cloudycube/strongswan \
+  list clients
+```
+
+#### Adding a Client
+
+TODO
+
+```
+docker run -it \
+  --volume strongswan-data:/data \
+  cloudycube/strongswan \
+  add client <id> <pass>
+```
+
+#### Enabling/Disabling a Client
+
+TODO
+
+```
+docker run -it \
+  --volume strongswan-data:/data \
+  cloudycube/strongswan \
+  enable client <id>
+  
+docker run -it \
+  --volume strongswan-data:/data \
+  cloudycube/strongswan \
+  disable client <id>
+```
+
+#### Remove a Client
+
+TODO
+
+```
+docker run -it \
+  --volume strongswan-data:/data \
+  cloudycube/strongswan \
+  remove client <id>
+```

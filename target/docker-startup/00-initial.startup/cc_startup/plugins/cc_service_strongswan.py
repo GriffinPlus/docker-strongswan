@@ -15,6 +15,7 @@ from subprocess import run, DEVNULL
 from ..cc_helpers import read_text_file, write_text_file, \
                          get_env_setting_bool, get_env_setting_integer, get_env_setting_string, \
                          iptables_run, iptables_add, ip6tables_run, ip6tables_add, \
+                         does_mount_point_exist, is_mount_point_readonly, \
                          load_kernel_module, resolve_hostnames
 from ..cc_log import Log
 from ..cc_service import Service
@@ -251,9 +252,13 @@ class StrongSwan(Service):
             os.rename(SUPERVISORD_NDPPD_CONF_PATH, SUPERVISORD_NDPPD_CONF_PATH + ".inactive")
 
         # remount /proc/sys read-write to enable 'sysctl' to work properly
+        # (only needed, if the container is not run in privileged mode)
         # -------------------------------------------------------------------------------------------------------------
-        Log.write_note("Remounting /proc/sys read-write...")
-        run(["mount", "-o", "remount,rw", "/proc/sys"], check=True, stdout=DEVNULL)
+        sys_proc_remounted_rw = False
+        if does_mount_point_exist("/proc/sys") and is_mount_point_readonly("/proc/sys"):        
+            Log.write_note("Remounting /proc/sys read-write...")
+            run(["mount", "-o", "remount,rw", "/proc/sys"], check=True, stdout=DEVNULL)
+            sys_proc_remounted_rw = True
 
         # configure networking
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -308,10 +313,10 @@ class StrongSwan(Service):
         ip6tables_add("FORWARD", "DROP", ["!", "-i", "lo", "-s", "::1/128"],     "Anti-Spoofing")
 
         # prevent attacker from using a VPN client address as source address
-        iptables_add( "INPUT",   "DROP", ["-i", "eth0", "-s", str(self._client_subnet_ipv4), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
-        iptables_add( "FORWARD", "DROP", ["-i", "eth0", "-s", str(self._client_subnet_ipv4), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
-        ip6tables_add("INPUT",   "DROP", ["-i", "eth0", "-s", str(self._client_subnet_ipv6), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
-        ip6tables_add("FORWARD", "DROP", ["-i", "eth0", "-s", str(self._client_subnet_ipv6), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
+        iptables_add( "INPUT",   "DROP", ["-s", str(self._client_subnet_ipv4), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
+        iptables_add( "FORWARD", "DROP", ["-s", str(self._client_subnet_ipv4), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
+        ip6tables_add("INPUT",   "DROP", ["-s", str(self._client_subnet_ipv6), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
+        ip6tables_add("FORWARD", "DROP", ["-s", str(self._client_subnet_ipv6), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
 
         # allow localhost to access everything
         # -------------------------------------------------------------------------------------------------------------
@@ -501,13 +506,11 @@ class StrongSwan(Service):
         iptables_add("POSTROUTING", "ACCEPT", [
                      "-t", "nat",
                      "-s", str(self._client_subnet_ipv4),
-                     "-o", "eth0",
                      "-m", "policy", "--dir", "out", "--pol", "ipsec"])
 
         iptables_add("POSTROUTING", "MASQUERADE", [
                      "-t", "nat",
-                     "-s", str(self._client_subnet_ipv4),
-                     "-o", "eth0"])
+                     "-s", str(self._client_subnet_ipv4)])
 
         if self._client_subnet_ipv6_is_site_local:
 
@@ -519,23 +522,23 @@ class StrongSwan(Service):
             ip6tables_add("POSTROUTING", "ACCEPT", [
                           "-t", "nat",
                           "-s", str(self._client_subnet_ipv6),
-                          "-o", "eth0",
                           "-m", "policy", "--dir", "out", "--pol", "ipsec"])
 
             ip6tables_add("POSTROUTING", "MASQUERADE", [
                           "-t", "nat",
-                          "-s", str(self._client_subnet_ipv6),
-                          "-o", "eth0"])
+                          "-s", str(self._client_subnet_ipv6)])
 
         # remount /proc/sys read-only again
         # -------------------------------------------------------------------------------------------------------------
-        Log.write_note("Remounting /proc/sys read-only...")
-        run(["mount", "-o", "remount,ro", "/proc/sys"], check=True, stdout=DEVNULL)
+        if sys_proc_remounted_rw:
+            Log.write_note("Remounting /proc/sys read-only...")
+            run(["mount", "-o", "remount,ro", "/proc/sys"], check=True, stdout=DEVNULL)
 
 
     # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
 
     def init_pki_internal(self):
         """

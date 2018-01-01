@@ -31,6 +31,9 @@ The image provides the following features:
 - Internet access over the VPN
   - IPv4: Masquerading
   - IPv6: Masquerading / Global Unicast Address (GUA)
+- Tested Clients
+  - Windows 10 Integrated VPN Client (Desktop)
+  - Android [StrongSwan App](https://play.google.com/store/apps/details?id=org.strongswan.android)
 
 This image belongs to a set of Docker images created for project [CloudyCube](https://www.falk-online.eu/projekte/cloudycube). The homepage is in German only, but you will find everything needed to get it working here as well.
 
@@ -148,12 +151,14 @@ Default Value: `true`
 
 Determines the verbosity of the *CloudyCube Container Startup System* (see [here](https://github.com/cloudycube/docker-base-supervisor) for details).
 
-- 0 => Only errors are logged.
-- 1 => Errors and warnings are logged.
-- 2 => Errors, warnings and notes are logged.
-- 3 => All messages (incl. debug) are logged.
+- 0 => Logging is disabled.
+- 1 => Only errors are logged.
+- 2 => Errors and warnings are logged.
+- 3 => Errors, warnings and notes are logged.
+- 4 => Errors, warnings, notes and infos are logged.
+- 5 => All messages (incl. debug) are logged.
 
-Default Value: `2`
+Default Value: `4`
 
 #### USE_DOCKER_DNS
 

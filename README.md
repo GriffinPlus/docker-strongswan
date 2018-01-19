@@ -169,15 +169,6 @@ Determines whether the built-in DNS server forwards name resolution requests to 
 
 Default Value: `true`
 
-#### USE_INTERNAL_PKI
-
-Determines whether to use the internal Certificate Authority (CA) for creating a certificate for the VPN server and its clients.
-
-- `true`, `1` => The internal Certificate Authority is used.
-- `false`, `0` => An external Certificate Authority is used.
-
-Default Value: `true`
-
 #### VPN_HOSTNAMES
 
 Determines the fully qualified hostnames of the VPN server. The internal Certificate Authority will create a server certificate for these hostnames telling clients that they are connected to the desired VPN server. Multiple hostnames must be separated by comma.

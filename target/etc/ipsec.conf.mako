@@ -4,8 +4,7 @@ config setup
 
 ca strongswan
     cacert = ${ca_cert_path}
-    # certuribase = http://ip6-winnetou.strongswan.org/certs/\n")
-    # crluri = http://ip6-winnetou.strongswan.org/strongswan.crl\n")
+    crluri = file://${ca_crl_path}
     auto = add
 
 conn %default

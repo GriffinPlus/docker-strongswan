@@ -5,328 +5,635 @@ License: MIT License
 """
 
 import os
-import datetime
+import sys
 
+from datetime import datetime
+from glob import iglob
 from OpenSSL import crypto, SSL
 from stat import S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP, S_IROTH, S_IWOTH
 from ..cc_log import Log
+from ..cc_helpers import is_email_address
 
 
-# ---------------------------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------------------------------------------------------------------
+# Definitions 
+# -------------------------------------------------------------------------------------------------------------------------------------------------------------
+
 
 CA_BASE_DIR = "/data/internal_ca"
 
-# ---------------------------------------------------------------------------------------------------------------------
+
+# -------------------------------------------------------------------------------------------------------------------------------------------------------------
+# Exception Classes 
+# -------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+class Error(Exception):
+    """
+    Base class for exceptions in this module.
+    """
+    pass
+
+
+# -----------------------------------------------------------------------------------------------------------------------------------------
+
+
+class NotInitializedError(Error):
+    """
+    Exception that is raised, if the CA is not initialized.
+
+    Attributes:
+        message (str) : Explanation of the error
+    """
+
+    def __init__(self, message, *args):
+        self.message = message.format(*args)
+
+
+# -----------------------------------------------------------------------------------------------------------------------------------------
+
+
+class AlreadyInitializedError(Error):
+    """
+    Exception that is raised, if the CA is already initialized.
+
+    Attributes:
+        message (str) : Explanation of the error
+    """
+
+    def __init__(self, message, *args):
+        self.message = message.format(*args)
+
+
+# -----------------------------------------------------------------------------------------------------------------------------------------
+
+
+class InconsistencyDetectedError(Error):
+    """
+    Exception that is raised, if the CA detects an inconsistency in its database.
+
+    Attributes:
+        message (str) : Explanation of the error
+    """
+
+    def __init__(self, message, *args):
+        self.message = message.format(*args)
+
+
+# -----------------------------------------------------------------------------------------------------------------------------------------
+
+
+class PasswordRequiredError(Error):
+    """
+    Exception that is raised, if an operation requires the CA password and it is not set.
+
+    Attributes:
+        message (str) : Explanation of the error
+    """
+
+    def __init__(self, message, *args):
+        self.message = message.format(*args)
+
+
+# -----------------------------------------------------------------------------------------------------------------------------------------
+
+
+class InvalidPasswordError(Error):
+    """
+    Exception that is raised, if a specified password does not match the CA password.
+
+    Attributes:
+        message (str) : Explanation of the error
+    """
+
+    def __init__(self, message, *args):
+        self.message = message.format(*args)
+
+
+# -----------------------------------------------------------------------------------------------------------------------------------------
+
+
+class NotFoundError(Error):
+    """
+    Exception that is raised, if a requested item was not found.
+
+    Attributes:
+        message (str) : Explanation of the error
+    """
+
+    def __init__(self, message, *args):
+        self.message = message.format(*args)
+
+
+
+# -------------------------------------------------------------------------------------------------------------------------------------------------------------
+# The CertificateAuthority Class
+# -------------------------------------------------------------------------------------------------------------------------------------------------------------
+
 
 class CertificateAuthority:
 
-    # -------------------------------------------------------------------------------------------
+
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
 
     def __init__(self):
-
-        self._base_dir     = CA_BASE_DIR
-        self._ca_cert_path = os.path.join(self._base_dir, "ca-cert.pem")
-        self._ca_key_path  = os.path.join(self._base_dir, "ca-key.pem")
-        self._inited       = False
-
-    # -------------------------------------------------------------------------------------------
-
-    def init_ca(self, need_key):
         """
-        Initializes the CA loading/creating any related data.
-        
-        Args:
-            need_key (bool): True, if the caller needs the private key of the CA for its operation;
-                             False, if the caller only needs the public key of the CA for its operation.
+        Initializes the instance of the CertificateAuthority class.
+
         """
 
-        # abort, if the CA is already initialized 
-        # ---------------------------------------------------------------------
-        if self._inited and (not need_key or self._ca_key != None):
-            return
+        self.__base_dir                 = CA_BASE_DIR
+        self.__ca_key_path              = os.path.join(self.__base_dir, "ca-key.pem")
+        self.__ca_cert_path             = os.path.join(self.__base_dir, "ca-cert.pem")
+        self.__ca_crl_path              = os.path.join(self.__base_dir, "ca-crl.pem")
+        self.__ca_next_cert_serial_path = os.path.join(self.__base_dir, "next-cert-serial.cnt")
+        self.__storage_dir              = os.path.join(self.__base_dir, "storage")
+        self.__ca_password              = None
+        self.__inited                   = False
 
-        # create directories where the key/certificate of the CA are stored, if necessary
-        # ---------------------------------------------------------------------
-        os.makedirs(os.path.dirname(self._ca_cert_path), exist_ok = True);
-        os.makedirs(os.path.dirname(self._ca_key_path),  exist_ok = True);
+        self.__ca_specific_files = [
+            self.__ca_key_path,
+            self.__ca_cert_path,
+            self.__ca_crl_path,
+        ]
 
-        # abort, if the certificate of the CA is present, but the key is not
-        # (most probably the user has removed the key for security reasons)
-        # => abort initialization, the user must provide the key or delete the CA certificate as well
-        # ---------------------------------------------------------------------
-        ca_key_exists = os.path.exists(self._ca_key_path)
-        ca_cert_exists = os.path.exists(self._ca_cert_path)
-        if ca_cert_exists and need_key and not ca_key_exists:
-            raise RuntimeError(("The certificate of the CA exists, but the key does not.\n"
-                                "Cannot perform requested operation without the key.\n"
-                                "Please provide the key ({0}) and retry.").format(self._ca_key_path));
 
-        # load/create the CA key
-        # ---------------------------------------------------------------------
-        if ca_key_exists:
-            Log.write_note("Loading key of the CA ({0})...".format(self._ca_key_path))
-            with open(self._ca_key_path, "rt") as f: key = f.read()
-            self._ca_key = crypto.load_privatekey(crypto.FILETYPE_PEM, key)
-        else:
-            Log.write_note("The key of the CA ({0}) does not exist. Generating...".format(self._ca_key_path))
-            self._ca_key = crypto.PKey()
-            self._ca_key.generate_key(crypto.TYPE_RSA, 4096)
-            with open(self._ca_key_path, "wb") as f:
-                f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM, self._ca_key))
-            os.chown(self._ca_key_path, 0, 0)
-            os.chmod(self._ca_key_path, S_IRUSR | S_IWUSR)
-            Log.write_note("The key of the CA was generated successfully.")
-
-        # load/create the CA certificate
-        # ---------------------------------------------------------------------
-        if ca_cert_exists:
-            Log.write_note("Loading certificate of the CA ({0})...".format(self._ca_cert_path))
-            with open(self._ca_cert_path, "rt") as f: cert = f.read()
-            self._ca_cert = crypto.load_certificate(crypto.FILETYPE_PEM, cert)
-        else:
-            Log.write_note("The certificate of the CA ({0}) does not exist. Generating...".format(self._ca_cert_path))
-            self._ca_cert = crypto.X509()
-            self._ca_cert.get_subject().C  = "DE"
-            self._ca_cert.get_subject().ST = "Berlin"
-            self._ca_cert.get_subject().L  = "Berlin"
-            self._ca_cert.get_subject().O  = "CloudyCube"
-            self._ca_cert.get_subject().CN = "Internal CA for VPN"
-            self._ca_cert.set_serial_number(1)
-            self._ca_cert.gmtime_adj_notBefore(0)
-            self._ca_cert.gmtime_adj_notAfter(10*365*24*60*60)
-            self._ca_cert.set_issuer(self._ca_cert.get_subject())
-            self._ca_cert.set_pubkey(self._ca_key)
-            self._ca_cert.add_extensions([
-                crypto.X509Extension(b'basicConstraints', True, b'CA:TRUE, pathlen:0'),
-                crypto.X509Extension(b'keyUsage', True, b'keyCertSign, cRLSign')
-            ])
-            self._ca_cert.sign(self._ca_key, "sha256")
-            with open(self._ca_cert_path, "wb") as f:
-               f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, self._ca_cert))
-            os.chown(self._ca_cert_path, 0, 0)
-            os.chmod(self._ca_cert_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
-            Log.write_note("The certificate of the CA was generated successfully.")
-
-        self._inited = True
-
-    # -------------------------------------------------------------------------------------------
+    # -------------------------------------------------------------------------------------------------------------------------------------
 
 
     @property
-    def ca_cert(self):
-        self.init_ca(False)
-        return self._ca_cert
-
-    @property
-    def ca_cert_path(self):
-        self.init_ca(False)
-        return self._ca_cert_path
-
-    @property
-    def ca_key(self):
-        self.init_ca(True)
-        return self._ca_key
-
-    @property
-    def ca_key_path(self):
-        self.init_ca(True)
-        return self._ca_key_path
-
-
-    # -------------------------------------------------------------------------------------------
-
-
-    def get_vpn_server_data(self, vpn_hostnames):
+    def password(self):
         """
-        Gets the key/certificate and related data of the VPN server, creates the certificate, if necessary.
+        Gets the password of the CA.
+
+        """
+        return self.__ca_password
+
+
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
+
+    @password.setter
+    def password(self, value):
+        """
+        Sets the password that is used to decrypt the private key of the CA.
 
         Args:
-            vpn_hostnames (list): Hostnames and IP addresses the VPN server will be reachable via.
-                                  Please prefix hostnames with 'DNS:' and IP addresses with 'IP:'
-                                  The first hostname/IP address in the list is put into the Common Name(CN) of the certificate.
-                                  All hostnames/IP addresses are put into the X.509 'subjectAltName' extension.
+            value (str) : Password to set (may be None, if no password is needed).
+
+        """
+
+        if value != None and not type(value) is str:
+            raise RuntimeError("Argument must be None or a string.")
+
+        # condition password
+        password = value
+        if value:
+            password = password.strip()
+            if len(password) == 0: password = None
+
+        # ensure that the environment is initialized, so the entered password can be checked
+        if not self.is_inited():
+            raise NotInitializedError("The CA is not initialized.")
+
+        # try to decrypt the private key of the CA with the password
+        try:
+
+            with open(self.__ca_key_path, "rb") as f:
+                if password == None: ca_key = crypto.load_privatekey(crypto.FILETYPE_PEM, f.read(), b"")
+                else:                ca_key = crypto.load_privatekey(crypto.FILETYPE_PEM, f.read(), password.encode("utf-8"))
+
+            self.__ca_password = password
+
+        except crypto.Error as e:
+
+            for arg in e.args:
+                for error in arg:
+                    if error[2] == "bad decrypt" or error[2] == "bad password read":
+                        # decrypting private key failed
+                        raise InvalidPasswordError("Decrypting CA private key failed. Wrong password.")
+
+            # some other OpenSSL error occurred
+            raise
+
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
+
+    @property
+    def password_required(self):
+        """
+        Checks whether a password is needed to decrypt the CA's private key.
 
         Returns:
-            A dictionary containing data about the key/certificate of the VPN server.
-            The dictionary contains the following data:
-            - 'key'                 (obj)  : OpenSSL key object of the server
-            - 'key path'            (str)  : Full path of the key file of the server on disk
-            - 'key created'         (bool) : True, if the server key was created;
-                                             False, if the existing server key was loaded
-            - 'certificate'         (obj)  : OpenSSL certificate object of the server
-            - 'certificate path'    (str)  : Full path of the server certificate file on disk
-            - 'certificate created' (bool) : True, if the server certificate was created;
-                                             False, if the existing server certificate was loaded
-            
+            True, if a password is needed to decrypt the CA's private key, otherwise False.
+
         """
 
-        server_cert_path = os.path.join(self._base_dir, "server", "cert.pem")
-        server_key_path  = os.path.join(self._base_dir, "server", "key.pem")
+        if not self.is_inited():
+            raise NotInitializedError("The CA is not initialized.")
 
-        # create directories where the key/certificate is stored, if necessary
+        try:
+
+            # try to read the private key without a password
+            with open(self.__ca_key_path, "rb") as f:
+                ca_key = crypto.load_privatekey(crypto.FILETYPE_PEM, f.read(), b"")
+
+        except crypto.Error as e:
+
+            for arg in e.args:
+                for error in arg:
+                    if error[2] == "bad password read":
+                        # private key is encrypted
+                        return True
+
+            # some other OpenSSL error occurred
+            raise
+
+        # private key is not encrypted
+        return False
+
+
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
+
+    @property
+    def cert(self):
+        """
+        Loads the certificate of the CA.
+
+        Exceptions:
+            NotInitializedError : The CA environment is not initialized.
+
+        """
+
+        # ensure that the CA environment is initialized
+        if not self.is_inited():
+            raise NotInitializedError("The CA is not initialized.")
+
+        # load the certificate
+        with open(self.__ca_cert_path, "rb") as f:
+            return crypto.load_certificate(crypto.FILETYPE_PEM, f.read())
+
+
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
+
+    @property
+    def cert_path(self):
+        """
+        Gets the path of the certificate of the CA.
+
+        """
+        return self.__ca_cert_path
+
+
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
+
+    @property
+    def key(self):
+        """
+        Loads the private key of the CA (the 'password' property must be set, if CA related data is encrypted).
+
+        Exceptions:
+            NotInitializedError : The CA environment is not initialized.
+
+        """
+
+        # ensure that the CA environment is initialized and the password is set, if necessary
+        if self.password_required and not self.__ca_password:
+            raise PasswordRequiredError("The requested operation requires the CA password to access the private key.")
+
+        # try to decrypt the private key of the CA with the password
+        with open(self.__ca_key_path, "rb") as f:
+            if not self.__ca_password: return crypto.load_privatekey(crypto.FILETYPE_PEM, f.read(), b"")
+            else:                      return crypto.load_privatekey(crypto.FILETYPE_PEM, f.read(), self.__ca_password.encode("utf-8"))
+
+
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
+
+    @property
+    def crl(self):
+        """
+        Loads the CRL of the CA.
+
+        Exceptions:
+            NotInitializedError : The CA environment is not initialized.
+        
+        """
+
+        # ensure that the CA environment is initialized
+        if not self.is_inited():
+            raise NotInitializedError("The CA is not initialized.")
+
+        # load the CRL
+        with open(self.__ca_crl_path, "rb") as f:
+            return crypto.load_crl(crypto.FILETYPE_PEM, f.read())
+
+
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
+
+    @property
+    def crl_path(self):
+        """
+        Gets the path of the CRL of the CA.
+
+        """
+        return self.__ca_crl_path
+
+
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
+
+    def init(self, password):
+        """
+        Initialized the CA environment generating related data (private key, certificate and filesystem structure).
+
+        Args:
+            password (str) : Password to protect CA related data with (None, if you don't want to use any protection)
+
+        Exceptions:
+            AlreadyInitializedError : The CA is already initialized (associated files are already present).
+
+        """
+
+        # abort, if a file that belongs to the CA itself is already present
         # ---------------------------------------------------------------------
-        os.makedirs(os.path.dirname(server_cert_path), exist_ok = True);
-        os.makedirs(os.path.dirname(server_key_path),  exist_ok = True);
+        if self.is_inited():
+            raise AlreadyInitializedError("The CA is already initialized.")
 
-        # check server key
-        # -----------------------------------------------------------------------------------------
-        create_server_key = False
-        if os.path.exists(server_key_path):
-            Log.write_note("Loading key of the VPN server ({0})...".format(server_key_path))
-            with open(server_key_path, "rt") as f: key = f.read()
-            server_key = crypto.load_privatekey(crypto.FILETYPE_PEM, key)
-        else:
-            Log.write_note("The key of the VPN server ({0}) does not exist.".format(server_key_path))
-            create_server_key = True
+        # create directories where the files are stored
+        # ---------------------------------------------------------------------
+        for ca_file in self.__ca_specific_files:
+            os.makedirs(os.path.dirname(ca_file), exist_ok = True)
 
-        # check server certificate and whether it needs to be (re)generated
-        # -----------------------------------------------------------------------------------------
-        create_server_cert = False
-        if create_server_key:
+        # condition password
+        # ---------------------------------------------------------------------
+        if password:
+            password = password.strip()
+            if len(password) == 0: password = None
 
-            Log.write_note("The key is generated, so the certificate of the VPN server ({0}) needs to be generated as well.".format(server_cert_path))
-            create_server_cert = True
+        # create the CA's private key
+        # ---------------------------------------------------------------------
+        ca_key = crypto.PKey()
+        ca_key.generate_key(crypto.TYPE_RSA, 4096)
 
-        else:
+        # create the CA's certificate
+        # ---------------------------------------------------------------------
+        ca_cert = crypto.X509()
+        ca_cert.get_subject().C  = "DE"
+        ca_cert.get_subject().ST = "Berlin"
+        ca_cert.get_subject().L  = "Berlin"
+        ca_cert.get_subject().O  = "CloudyCube"
+        ca_cert.get_subject().CN = "Internal CA for VPN"
+        ca_cert.set_serial_number(self.get_next_serial_number())
+        ca_cert.gmtime_adj_notBefore(0)
+        ca_cert.gmtime_adj_notAfter(10*365*24*60*60)
+        ca_cert.set_issuer(ca_cert.get_subject())
+        ca_cert.set_pubkey(ca_key)
+        ca_cert.add_extensions([
+            crypto.X509Extension(b'basicConstraints', True, b'CA:TRUE, pathlen:0'),
+            crypto.X509Extension(b'keyUsage', True, b'keyCertSign, cRLSign')
+        ])
+        ca_cert.sign(ca_key, "sha256")
 
-            if os.path.exists(server_cert_path):
+        # create the CRL
+        # ---------------------------------------------------------------------
+        ca_crl = crypto.CRL()
 
-                Log.write_note("Loading certificate of the VPN server ({0})...".format(server_cert_path))
-                with open(server_cert_path, "rt") as f: cert = f.read()
-                server_cert = crypto.load_certificate(crypto.FILETYPE_PEM, cert)
+        # write key, certificate and the CRL to disk
+        # ---------------------------------------------------------------------
+        try:
 
-                # check CN in certificate
-                # ---------------------------------------------------------------------------------------------
-                cert_hostname = server_cert.get_subject().CN
-                expected_hostname = ":".join(vpn_hostnames[0].split(":")[1:])
-                if cert_hostname != expected_hostname:
-                    Log.write_warning("The certificate was made for '{0}', but '{1}' is currently configured.".format(cert_hostname, expected_hostname))
-                    Log.write_warning("Fixing this automatically by regenerating the server certificate.")
-                    create_server_cert = True
+            # private key
+            with open(self.__ca_key_path, "wb") as f:
+               if password: f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM, ca_key, "aes256", password.encode("utf-8")) )
+               else:        f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM, ca_key))
+            os.chown(self.__ca_key_path, 0, 0)
+            os.chmod(self.__ca_key_path, S_IRUSR | S_IWUSR)
 
-                # check subjectAltName extension
-                # ---------------------------------------------------------------------------------------------
-                if not create_server_cert:
-                    foundSubjectAltNameExtension = False
-                    for cert_extension_index in range(0, server_cert.get_extension_count()):
-                        extension = server_cert.get_extension(cert_extension_index)
-                        if extension.get_short_name() == b'subjectAltName':
-                            cert_subjects = str(extension)
-                            expected_subjects = ", ".join(vpn_hostnames)
-                            if cert_subjects != expected_subjects:
-                                Log.write_warning("Found extension 'subjectAltName', but it is '{0}', should be '{1}'.".format(cert_subjects, expected_subjects))
-                                create_server_cert = True
-                            foundSubjectAltNameExtension = True
-                            break
-                    if not foundSubjectAltNameExtension:
-                        Log.write_note("The certificate does not contain a 'subjectAltName' extension.".format(server_cert_path))
-                        Log.write_warning("Fixing this automatically by regenerating the server certificate.")
-                        create_server_cert = True
+            # certificate
+            with open(self.__ca_cert_path, "wb") as f:
+               f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, ca_cert))
+            os.chown(self.__ca_cert_path, 0, 0)
+            os.chmod(self.__ca_cert_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
 
+            # CRL
+            with open(self.__ca_crl_path, "wb") as f:
+                f.write(ca_crl.export(ca_cert, ca_key, days = 100, digest = b"sha256"))
+
+        except:
+
+            # writing CA environment failed => delete generated files
+            if os.path.exists(self.__ca_key_path): os.remove(self.__ca_key_path)
+            if os.path.exists(self.__ca_cert_path): os.remove(self.__ca_cert_path)
+            if os.path.exists(self.__ca_crl_path): os.remove(self.__ca_crl_path)
+            raise
+
+        self.__ca_password = password
+
+
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
+
+    def is_inited(self):
+        """
+        Checks whether the CA environment is initialized.
+
+        Returns:
+            True, if the CA environment is initialized; otherwise False.
+
+        """
+
+        count = 0
+        for ca_file in self.__ca_specific_files:
+            if os.path.exists(ca_file): count += 1
+
+        if count > 0 and count != len(self.__ca_specific_files):
+            raise InconsistencyDetectedError("The CA seems to be initialized, but there are files missing!")
+
+        return count > 0
+
+
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
+
+    def get_certificate(self, serial_number, raiseIfNotExist = True):
+        """
+        Gets the specified certificate.
+
+        Args:
+            serial_number (int)    : Serial number of the certificate to get.
+            raiseIfNotExist (bool) : True to throw a NotFoundError exception, if the requested certificate does not exist;
+                                     False to return None, if the requested certificate does not exist.
+
+        Returns:
+            An OpenSSL X509 certificate object;
+            None, if the specified certificate does not exist (and raiseIfNotExist is False).
+
+        Exceptions:
+            NotFoundError, if the specified certificate does not exist (and raiseIfNotExist is True).
+
+        """
+
+        serial_number = int(serial_number)
+
+        # ensure that the environment is initialized
+        if not self.is_inited():
+            raise NotInitializedError("The CA is not initialized.")
+
+        # check whether the certificate exists
+        filename = "{0:010}.crt".format(serial_number)
+        cert_path = os.path.join(self.__storage_dir, filename)
+        if not os.path.exists(cert_path):
+            if raiseIfNotExist:
+                raise NotFoundError("The requested certificate (serial number: {0}) was not found.", serial_number)
             else:
+                return None
 
-                Log.write_note("The certificate of the VPN server ({0}) does not exist.".format(server_cert_path))
-                create_server_cert = True
+        # try to load the certificate
+        with open(cert_path, "rb") as f:
+            cert = crypto.load_certificate(crypto.FILETYPE_PEM, f.read())
 
-        # initialize the CA
-        # ---------------------------------------------------------------------
-        self.init_ca(create_server_cert)
+        # check sanity
+        if cert.get_serial_number() != serial_number:
+            raise RuntimeError("Unexpected certificate serial number.")
 
-        # load/create the server key
-        # ---------------------------------------------------------------------
-        if create_server_key:
-            Log.write_note("Generating the key of the VPN server ({0})...".format(server_key_path))
-            server_key = crypto.PKey()
-            server_key.generate_key(crypto.TYPE_RSA, 4096)
-            with open(server_key_path, "wb") as f:
-                f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM, server_key))
-            os.chown(server_key_path, 0, 0)
-            os.chmod(server_key_path, S_IRUSR | S_IWUSR)
-            Log.write_note("The key of the VPN server was generated successfully.")
+        return cert
 
-        # load/create the server certificate
-        # ---------------------------------------------------------------------
-        if create_server_cert:
-            Log.write_note("Generating the certificate of the VPN server ({0})...".format(server_cert_path))
-            server_cert = crypto.X509()
-            server_cert.get_subject().C  = "DE"
-            server_cert.get_subject().ST = "Berlin"
-            server_cert.get_subject().L  = "Berlin"
-            server_cert.get_subject().O  = "CloudyCube"
-            server_cert.get_subject().OU = "VPN Provider"
-            server_cert.get_subject().CN = ":".join(vpn_hostnames[0].split(":")[1:]) # strips the "DNS:" or "IP:" prefix
-            server_cert.set_serial_number(1)
-            server_cert.gmtime_adj_notBefore(0)
-            server_cert.gmtime_adj_notAfter(10*365*24*60*60)
-            server_cert.set_issuer(self._ca_cert.get_subject())
-            server_cert.set_pubkey(server_key)
-            server_cert.add_extensions(
-            [
-                # basicConstraints
-                # -------------------------------------------------------------------------------------
-                crypto.X509Extension(b'basicConstraints', False, b'CA:FALSE'),
 
-                # keyUsage
-                # -------------------------------------------------------------------------------------
-                crypto.X509Extension(b'keyUsage', False, b'digitalSignature, nonRepudiation, keyEncipherment, keyAgreement'),
+    # -------------------------------------------------------------------------------------------------------------------------------------
 
-                # subjectAltName
-                # -------------------------------------------------------------------------------------
-                crypto.X509Extension(b"subjectAltName", False, ", ".join(vpn_hostnames).encode()),
 
-                # extendedKeyUsage
-                # -------------------------------------------------------------------------------------
-                # serverAuth (1.3.6.1.5.5.7.3.1) is required by the built-in Windows 7 VPN client
-                # ikeIntermediate (1.3.6.1.5.5.8.2.2) is required OS X 10.7.3 or older
-                # -------------------------------------------------------------------------------------
-                crypto.X509Extension(b'extendedKeyUsage', False, b'serverAuth, 1.3.6.1.5.5.8.2.2')
-            ])
-            server_cert.sign(self._ca_key, "sha256")
-            with open(server_cert_path, "wb") as f:
-                f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, server_cert))
-            os.chown(server_cert_path, 0, 0)
-            os.chmod(server_cert_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
-            Log.write_note("The certificate of the VPN server was generated successfully.")
- 
-        return {
-            "key"                 : server_key,
-            "key path"            : server_key_path,
-            "key created"         : create_server_key,
-            "certificate"         : server_cert,
-            "certificate path"    : server_cert_path,
-            "certificate created" : create_server_cert,
-        }
+    def revoke_certificate(self, serial_number, reason = "unspecified"):
+        """
+        Revokes the specified certificate.
 
-    # -------------------------------------------------------------------------------------------
+        Args:
+            serial_number (int) : Serial number of the certificate to revoke
+            reason (str)        : Reason of the revocation. May be one of the following:
+                                  - 'unspecified'
+                                  - 'keyCompromise'
+                                  - 'CACompromise'
+                                  - 'affiliationChanged'
+                                  - 'superseded'
+                                  - 'cessationOfOperation'
+                                  - 'certificateHold'
 
-    def create_vpn_client_data(self, identity, password):
+        Exceptions:
+            NotFoundError, if the specified certificate does not exist.
+
+        """
+
+        serial_number = int(serial_number)
+
+        # get the certificate with the specified serial number
+        cert = self.get_certificate(serial_number, raiseIfNotExist = True)
+
+        # get the key and the certificate of the CA
+        ca_key = self.key
+        ca_cert = self.cert
+
+        # update the CRL
+        with open(self.__ca_crl_path, "rb+") as f:
+
+            # read CRL
+            crl = f.read()
+            crl = crypto.load_crl(crypto.FILETYPE_PEM, crl)
+
+            # add revoked certificate to CRL
+            revoked = crypto.Revoked()
+            revoked.set_rev_date(datetime.utcnow().strftime("%Y%m%d%H%M%SZ").encode("ascii"))
+            revoked.set_serial("{0:X}".format(cert.get_serial_number()).encode("ascii"))
+            revoked.set_reason(reason.encode("ascii"))
+            crl.add_revoked(revoked)
+
+            # write CRL
+            f.seek(0)
+            f.truncate()
+            f.write(crl.export(ca_cert, ca_key, crypto.FILETYPE_PEM, days = 100, digest = b"sha256"))
+
+
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
+
+    def unrevoke_certificate(self, serial_number):
+        """
+        Unrevokes the specified certificate.
+
+        Args:
+            serial_number (int) : Serial number of the certificate to revoke
+
+        Exceptions:
+            NotFoundError, if the specified certificate does not exist.
+
+        """
+
+        serial_number = int(serial_number)
+
+        # get the certificate with the specified serial number
+        cert = self.get_certificate(serial_number, raiseIfNotExist = True)
+
+        # get the key and the certificate of the CA
+        ca_key = self.key
+        ca_cert = self.cert
+
+        # update the CRL
+        with open(self.__ca_crl_path, "rb+") as f:
+
+            # read CRL
+            crl = f.read()
+            crl = crypto.load_crl(crypto.FILETYPE_PEM, crl)
+
+            # copy CRL, but remove the specified certificate
+            new_crl = crypto.CRL()
+            removed = False
+            for revoked in crl.get_revoked():
+                if int(revoked.get_serial(), 16) != serial_number:
+                    new_crl.add_revoked(revoked)
+                    removed = True
+
+            # write new CRL, if necessary
+            if removed:
+                f.seek(0)
+                f.truncate()
+                f.write(new_crl.export(ca_cert, ca_key, crypto.FILETYPE_PEM, days = 100, digest = b"sha256"))
+
+
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
+
+    def add_vpn_client(self, identity):
         """
         Creates a new key/certificate for a VPN client that should be able to connect to the VPN server.
 
         Args:
             identity (str) : Identity of the client (must be an e-mail address).
-            password (str) : Password to protect the generated PKCS12 archive
 
         Returns:
-            A dictionary containing data about the key/certificate of the VPN client.
-            The dictionary contains the following data:
-            - 'key'                   (obj)  : OpenSSL 'PKey' object representing the private key of the client
-            - 'certificate'           (obj)  : OpenSSL 'X509' object representing the certificate of the client
-            - 'certificate path'      (str)  : Full path of the certificate file on disk
-            - 'pkcs12 archive'        (obj)  : OpenSSL 'PKCS12' object
+            A tuple containing the following data:
+            - The serial number of the certificate (int)
+            - The client's private key (OpenSSL PKey object)
+            - The client's certificate key (OpenSSL X509 object)
             
         """
 
-        timestamp = "{:%Y-%m-%d %H-%M-%S}".format(datetime.datetime.utcnow())
-        client_cert_path = os.path.join(self._base_dir, "clients", timestamp + " - " + identity + ".pem")
-
-        # create directory where generated client certificates are stored, if necessary
+        # load the CA's private key and certificate
         # -----------------------------------------------------------------------------------------
-        os.makedirs(os.path.dirname(client_cert_path), exist_ok = True);
+        ca_key = self.key
+        ca_cert = self.cert
 
-        # initialize the CA
-        # ---------------------------------------------------------------------
-        self.init_ca(True)
+        # ensure the the identity is an e-mail address
+        # -----------------------------------------------------------------------------------------
+        if not is_email_address(identity):
+            raise RuntimeError("The specified identity ({0}) is not an e-mail address.".format(identity))
+
+        # create directory where generated certificates are stored, if necessary
+        # -----------------------------------------------------------------------------------------
+        os.makedirs(self.__storage_dir, exist_ok = True)
 
         # create the client key
         # ---------------------------------------------------------------------
@@ -340,12 +647,12 @@ class CertificateAuthority:
         client_cert.get_subject().ST = "Berlin"
         client_cert.get_subject().L  = "Berlin"
         client_cert.get_subject().O  = "CloudyCube"
-        client_cert.get_subject().OU = "VPN Client"
+        client_cert.get_subject().OU = "VPN Clients"
         client_cert.get_subject().CN = identity
-        client_cert.set_serial_number(1)
+        client_cert.set_serial_number(self.get_next_serial_number())
         client_cert.gmtime_adj_notBefore(0)
         client_cert.gmtime_adj_notAfter(2*365*24*60*60)
-        client_cert.set_issuer(self._ca_cert.get_subject())
+        client_cert.set_issuer(ca_cert.get_subject())
         client_cert.set_pubkey(client_key)
         client_cert.add_extensions(
         [
@@ -367,26 +674,233 @@ class CertificateAuthority:
             # -------------------------------------------------------------------------------------
             crypto.X509Extension(b'extendedKeyUsage', False, b'clientAuth, 1.3.6.1.5.5.8.2.2')
         ])
-        client_cert.sign(self._ca_key, "sha256")
-        with open(client_cert_path, "wb") as f:
-            f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, client_cert))
-        os.chown(client_cert_path, 0, 0)
-        os.chmod(client_cert_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
-        Log.write_note("The certificate of the VPN client ({0}) was generated successfully.".format(identity))
+        client_cert.sign(ca_key, "sha256")
 
-        # create a PKCS12 package containing everything the client needs to log in
+        # write the client's certificate to the storage directory
+        # (private key is not needed for further operations)
+        # ---------------------------------------------------------------------
+        base_filename = "{0:010}".format(client_cert.get_serial_number())
+        client_cert_path = os.path.join(self.__storage_dir, base_filename + ".crt")
+
+        try:
+
+            # certificate
+            with open(client_cert_path, "wb") as f:
+               f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, client_cert))
+            os.chown(client_cert_path, 0, 0)
+            os.chmod(client_cert_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
+
+        except:
+
+            # writing files failed => delete generated files
+            if os.path.exists(client_cert_path): os.remove(client_cert_path)
+            raise
+
+        return (client_cert.get_serial_number(), client_key, client_cert)
+
+
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
+
+    def is_vpn_client_certificate(self, cert):
+        """
+        Checks whether the specified X509 certificate is a client certificate for the VPN server.
+
+        Args:
+            cert (OpenSSL X509 object) : Certificate to check.
+
+        Returns:
+            True, if the specified certificate is a client certificate;
+            otherwise False
+
+        """
+        
+        if not isinstance(cert, crypto.X509):
+            raise RuntimeError("The specified argument is not an OpenSSL X509 object.")
+
+        identity = cert.get_subject().CN
+        if not is_email_address(identity):
+            return False
+
+        # check whether the 'extendedKeyUsage' extension exists and indicates that this is a client certificate
+        foundExpectedUsage = False
+        for cert_extension_index in range(0, cert.get_extension_count()):
+            extension = cert.get_extension(cert_extension_index)
+            if extension.get_short_name() == b'extendedKeyUsage':
+                cert_usages = [ usage.strip() for usage in str(extension).split(",") ]
+                if "TLS Web Client Authentication" in cert_usages:
+                    foundExpectedUsage = True
+                    break
+
+        if not foundExpectedUsage:
+            return False
+
+        return True
+
+
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
+
+    def get_vpn_client_certificates(self, include_expired = True, include_revoked = True):
+        """
+        Gets a list of client certificates the CA has generated for VPN clients.
+
+        Args:
+            include_expired (bool) : True to return expired certificates as well; otherwise False.
+            include_revoked (bool) : True to return revoked certificates as well; otherwise False.
+
+        Returns:
+            A list of OpenSSL X509 objects.
+
+        """
+
+        # get the CA's CRL (checks whether the CA environment is initialized)
+        # ---------------------------------------------------------------------
+        crl = self.crl
+
+        # scan storage directory for client certificates
+        # ---------------------------------------------------------------------
+        client_certs = []
+        files = [f for f in iglob(self.__storage_dir + "/*.crt", recursive=False) if os.path.isfile(f)]
+        for cert_path in files:
+
+            # load certificate
+            with open(cert_path, "rb") as f: cert = f.read()
+            cert = crypto.load_certificate(crypto.FILETYPE_PEM, cert)
+
+            # skip, if the certificate isn't a client certificate
+            if not self.is_vpn_client_certificate(cert):
+                continue
+
+            # skip, if the certificate has expired (if requested)
+            if cert.has_expired() and not show_expired:
+                continue
+
+            # check whether the certificate has been revoked
+            revoked = crl.get_revoked()
+            cert_revoked = False
+            if revoked:
+                for x in revoked:
+                    if cert.get_serial_number() == int(x.get_serial(), 16):
+                        cert_revoked = True
+                        break
+            if cert_revoked and not include_revoked:
+                continue
+
+            client_certs.append(cert)
+
+        return client_certs
+
+             
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
+
+    def create_vpn_server_certificate(self, vpn_hostnames, server_key = None):
+        """
+        Creates a certificate for the VPN server listening to the specified hostnames.
+        A key is created as well, if it is not specified explicitly.
+
+        Args:
+            vpn_hostnames (list)             : Hostnames and IP addresses the VPN server will be reachable via.
+                                               Please prefix hostnames with 'DNS:' and IP addresses with 'IP:'
+                                               The first hostname/IP address in the list is put into the Common Name(CN) of the certificate.
+                                               All hostnames/IP addresses are put into the X.509 'subjectAltName' extension.
+            server_key (OpenSSL PKey object) : The key of the Server to create the certificate with (None to create a new key)
+
+        Returns:
+            A tuple containing the key (OpenSSL PKey object) and the certificate (OpenSSL X509 object) of the VPN server.
+
+        """
+
+        # load the CA's private key and certificate (checks whether the CA environment is initialized)
         # -----------------------------------------------------------------------------------------
-        pfx = crypto.PKCS12Type()
-        pfx.set_ca_certificates([self._ca_cert])
-        pfx.set_privatekey(client_key)
-        pfx.set_certificate(client_cert)
-        pfxdata = pfx.export(password)
-        with open(client_cert_path + ".pfx", "wb") as f:
-            f.write(pfxdata)
+        ca_key = self.key
+        ca_cert = self.cert
 
-        return {
-            "key"               : client_key,
-            "certificate"       : client_cert,
-            "certificate path"  : client_cert_path,
-            "pkcs12 archive"    : pfx
-        }
+        # create directory where the key/certificate is stored, if necessary
+        # ---------------------------------------------------------------------
+        os.makedirs(self.__storage_dir, exist_ok = True)
+
+        # create the private key of the server
+        # ---------------------------------------------------------------------
+        if server_key == None:
+            server_key = crypto.PKey()
+            server_key.generate_key(crypto.TYPE_RSA, 4096)
+
+        # create the certificate of the server
+        # ---------------------------------------------------------------------
+        server_cert = crypto.X509()
+        server_cert.get_subject().C  = "DE"
+        server_cert.get_subject().ST = "Berlin"
+        server_cert.get_subject().L  = "Berlin"
+        server_cert.get_subject().O  = "CloudyCube"
+        server_cert.get_subject().OU = "VPN Provider"
+        server_cert.get_subject().CN = ":".join(vpn_hostnames[0].split(":")[1:]) # strips the "DNS:" or "IP:" prefixes
+        server_cert.set_serial_number(self.get_next_serial_number())
+        server_cert.gmtime_adj_notBefore(0)
+        server_cert.gmtime_adj_notAfter(2*365*24*60*60)
+        server_cert.set_issuer(ca_cert.get_subject())
+        server_cert.set_pubkey(server_key)
+        server_cert.add_extensions(
+        [
+            # basicConstraints
+            # -------------------------------------------------------------------------------------
+            crypto.X509Extension(b'basicConstraints', False, b'CA:FALSE'),
+
+            # keyUsage
+            # -------------------------------------------------------------------------------------
+            crypto.X509Extension(b'keyUsage', False, b'digitalSignature, nonRepudiation, keyEncipherment, keyAgreement'),
+
+            # subjectAltName
+            # -------------------------------------------------------------------------------------
+            crypto.X509Extension(b"subjectAltName", False, ", ".join(vpn_hostnames).encode()),
+
+            # extendedKeyUsage
+            # -------------------------------------------------------------------------------------
+            # serverAuth (1.3.6.1.5.5.7.3.1) is required by the built-in Windows 7 VPN client
+            # ikeIntermediate (1.3.6.1.5.5.8.2.2) is required OS X 10.7.3 or older
+            # -------------------------------------------------------------------------------------
+            crypto.X509Extension(b'extendedKeyUsage', False, b'serverAuth, 1.3.6.1.5.5.8.2.2')
+        ])
+        server_cert.sign(ca_key, "sha256")
+
+        # write certificate file
+        base_filename = "{0:010}".format(server_cert.get_serial_number())
+        server_cert_path = os.path.join(self.__storage_dir, base_filename + ".crt")
+        with open(server_cert_path, "wb") as f:
+            f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, server_cert))
+        os.chown(server_cert_path, 0, 0)
+        os.chmod(server_cert_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
+
+        return (server_key, server_cert)
+
+
+    # ---------------------------------------------------------------------------------------------------------------------------------------------------------
+    # Helper Functions
+    # ---------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+    def get_next_serial_number(self):
+        """
+        Gets the serial number for the next certificate and increments the counter.
+
+        Returns:
+            The serial number to assign to the next created certificate (int).
+
+        """
+        if os.path.exists(self.__ca_next_cert_serial_path):
+            with open(self.__ca_next_cert_serial_path, "rt+") as f:
+                buf = f.read()
+                f.seek(0)
+                f.truncate()
+                next = int(buf)
+                f.write(str(next+1))
+                return next
+        else:
+            next = 0
+            with open(self.__ca_next_cert_serial_path, "wt+") as f:
+                f.write("{0}".format(next+1))
+            return next
+
+
+# -------------------------------------------------------------------------------------------------------------------------------------------------------------

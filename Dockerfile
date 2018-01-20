@@ -1,19 +1,33 @@
 FROM cloudycube/base-supervisor
 MAINTAINER Sascha Falk <sascha@falk-online.eu>
 
+ENV STRONGSWAN_VERSION="5.6.1"
+
 # Update image and install additional packages
 # -----------------------------------------------------------------------------
-RUN apt-get -y update && \
+RUN \
+  # install packages
+  DEV_PACKAGES="bzip2 make gcc libcurl4-openssl-dev libgmp-dev libssl-dev" && \
+  apt-get -y update && \
   apt-get -y install \
     bind9 \
     ndppd \
-    strongswan \
-    strongswan-plugin-af-alg \
-    strongswan-plugin-eap-dynamic \
-    strongswan-plugin-eap-tls \
-    strongswan-plugin-eap-ttls \
-    strongswan-plugin-kernel-libipsec \
-    strongswan-plugin-whitelist && \
+    libcurl3 libgmp10 libssl1.0.0 \
+    $DEV_PACKAGES && \
+
+  # download and build strongswan source code
+  mkdir /strongswan-build && \
+  cd /strongswan-build && \
+  wget https://download.strongswan.org/strongswan-$STRONGSWAN_VERSION.tar.bz2 && \
+  tar -xjf strongswan-$STRONGSWAN_VERSION.tar.bz2 && \
+  cd strongswan-$STRONGSWAN_VERSION && \
+  ./configure --prefix=/usr --sysconfdir=/etc --enable-af-alg --enable-curl --enable-eap-dynamic --enable-eap-identity --enable-eap-tls --enable-files --enable-openssl && \
+  make all && make install && \
+  cd / && rm -R /strongswan-build && \
+
+  # clean up
+  apt-get -y remove $DEV_PACKAGES && \
+  apt-get -y autoremove && \
   apt-get clean && \
   rm -rf /var/lib/apt/lists/*
 

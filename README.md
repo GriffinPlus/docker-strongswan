@@ -15,6 +15,7 @@ Forks](https://img.shields.io/github/forks/cloudycube/docker-strongswan.svg?labe
 This is a Docker image deriving from the [base-supervisor](https://github.com/cloudycube/docker-base-supervisor) image. It adds the popular VPN software [StrongSwan](https://www.strongswan.org/) that allows you to create a VPN tunnel from common IKEv2 capable IPSec VPN clients right into your Docker stack. It can be useful, if you want to access your services remotely, but don't want your services (especially administration panels) to be visible on the public internet. This greatly reduces attack vectors malicious people can use to gain access to your system.
 
 The image provides the following features:
+- StrongSwan Version 5.6.1
 - Dual-Stack Tunnel Broker (IPv4-over-IPv4, IPv4-over-IPv6, IPv6-over-IPv4, IPv6-over-IPv4)
 - Authentication Methods
   - IKEv2 certificate authentication
@@ -26,7 +27,7 @@ The image provides the following features:
 - Internal DNS forwarder provides name resolution services to VPN clients using...
   - Docker's embedded DNS (containers can be accessed by their name)
   - External DNS servers
-- High performance by using NETKEY (kernel-mode IPSec) and the Linux Kernel Crypto API
+- High performance by using NETKEY (kernel-mode IPSec) and the OpenSSL / Linux Kernel Crypto API
 - Communication between VPN clients
 - Internet access over the VPN
   - IPv4: Masquerading
@@ -185,13 +186,39 @@ docker network connect <network> strongswan-vpn
 
 ### Step 5 - Manage VPN Clients
 
-#### Getting Clients
+This step applys only, if the *strongswan* container is configured to use the internal CA to authenticate clients. This is the case, if you followed the setup steps up to this point. If the container is configured to use an external CA for client authentication, the following commands are without effect.
 
-TODO
+A user (VPN client) is always identified by its e-mail address, so `<id>` in the examples below mean a valid e-mail address. Furthermore users authenticate themselves against the VPN server using client certificates. A VPN client can have multiple client certificates.
+
+All commands support two output formats that are optimized for interactive use (`text`) and for scripting (`tsv`, tab-separated-values). The output format can be explicitly set by the `--out-format=[text|tsv]` parameter when running the command using `docker run`. If `--out-format` is not specified, the output format depends on whether the container has a pseudo TTY attached or not. If the command is run using `docker run -it cloudycube/strongswan <cmd>` (terminal mode) the container uses the `text` format, otherwise it uses the `tsv` format (scripting mode).
+
+The `text` output format looks like the following:
 
 ```
-docker run -it \
-  --volume strongswan-data:/data \
+| Identity       | Serial     | Not Before                | Not After                 | Revoked |
+|----------------+------------+---------------------------+---------------------------+---------|
+| alice@acme.com | 0000000003 | 2018/01/01 08:12:32 (UTC) | 2020/01/01 08:12:32 (UTC) |         |
+| bob@acme.com   | 0000000001 | 2018/01/01 08:10:22 (UTC) | 2020/01/01 08:10:22 (UTC) |         |
+| john@acme.com  | 0000000002 | 2018/01/01 08:11:00 (UTC) | 2020/01/01 08:11:00 (UTC) |         |
+|----------------+------------+---------------------------+---------------------------+---------|
+```
+
+The `tsv` output format looks like the following (fields are separated by tabs, beautified for better readability here):
+
+```
+Identity        Serial  Not Before            Not After               Revoked
+alice@acme.com  3       2018-01-01T08:12:32   2020-01-01T08:12:32
+bob@acme.com    1       2018-01-01T08:10:22   2020-01-01T08:10:22
+john@acme.com   2       2018-01-01T08:11:00   2020-01-01T08:11:00
+```
+
+#### Getting Clients
+
+A list of VPN clients - respectively their certificates - that were created by the internal CA can be retrieved as follows:
+
+```
+docker run \
+  -v strongswan-data:/data \
   cloudycube/strongswan \
   list clients
 ```

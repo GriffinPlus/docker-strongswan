@@ -10,17 +10,10 @@ RUN apt-get -y update && \
     strongswan \
     strongswan-plugin-af-alg \
     strongswan-plugin-eap-dynamic \
-    strongswan-plugin-eap-mschapv2 \
-    strongswan-plugin-eap-peap \
     strongswan-plugin-eap-tls \
     strongswan-plugin-eap-ttls \
-    strongswan-plugin-farp \
-    strongswan-plugin-gcrypt \
-    strongswan-plugin-gmp \
     strongswan-plugin-kernel-libipsec \
-    strongswan-plugin-whitelist \
-    strongswan-plugin-xauth-eap \
-    strongswan-plugin-xauth-generic && \
+    strongswan-plugin-whitelist && \
   apt-get clean && \
   rm -rf /var/lib/apt/lists/*
 

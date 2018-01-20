@@ -1,5 +1,6 @@
 config setup
     charondebug = "ike 3, knl 3, cfg 3, net 3, esp 3, dmn 3,  mgr 3"
+    strictcrlpolicy = yes
     uniqueids = yes
 
 ca strongswan

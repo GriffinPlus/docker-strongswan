@@ -18,7 +18,7 @@ from subprocess import run, DEVNULL
 
 from ..cc_log import Log
 from ..cc_cmdproc import CommandProcessor, PositionalArgument, NamedArgument
-from ..cc_errors import ExitCodeError, GeneralError, CommandLineArgumentError, IoError, EXIT_CODE_SUCCESS
+from ..cc_errors import ExitCodeError, FileNotFoundError, GeneralError, CommandLineArgumentError, IoError, EXIT_CODE_SUCCESS
 from ..cc_helpers import read_text_file, write_text_file, print_error, readline_if_no_tty, \
                          get_env_setting_bool, get_env_setting_integer, get_env_setting_string, \
                          iptables_run, iptables_add, ip6tables_run, ip6tables_add, \
@@ -467,6 +467,9 @@ class VpnCommandProcessor(CommandProcessor):
         if len(revoked_certs) == 0:
             raise FileNotFoundError("The specified identity ({0}) has no active certificates.", identity)
 
+        # re-read effected records
+        revoked_certs = [ ca.get_certificate(x.get_serial_number()) for x in revoked_certs ] 
+
         # print effected certificates
         if out_format.lower() == "text":
             self.__print_clients_text(ca.crl, revoked_certs)
@@ -546,6 +549,9 @@ class VpnCommandProcessor(CommandProcessor):
         # abort, if no certificate was unrevoked
         if len(unrevoked_certs) == 0:
             raise FileNotFoundError("The specified identity ({0}) does not have any revoked certificates that have not expired, yet.", identity)
+
+        # re-read effected certificates
+        unrevoked_certs = [ ca.get_certificate(x.get_serial_number()) for x in unrevoked_certs ] 
 
         # print effected certificates
         if out_format.lower() == "text":
@@ -764,6 +770,11 @@ class VpnCommandProcessor(CommandProcessor):
             Log.write_info("Remounting /proc/sys read-write...")
             run(["mount", "-o", "remount,rw", "/proc/sys"], check=True, stdout=DEVNULL)
             sys_proc_remounted_rw = True
+
+        # link the certificate and the CRL of the internal CA into /etc/ipsec.d/[cacerts|crls]
+        # -------------------------------------------------------------------------------------------------------------
+        os.symlink(self.__ca_crl_path, os.path.join("/etc/ipsec.d/crls", os.path.basename(self.__ca_crl_path)))
+        os.symlink(self.__ca_cert_path, os.path.join("/etc/ipsec.d/cacerts", os.path.basename(self.__ca_cert_path)))
 
         # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         # configure networking

@@ -3,11 +3,6 @@ config setup
     strictcrlpolicy = yes
     uniqueids = yes
 
-ca strongswan
-    cacert = ${ca_cert_path}
-    crluri = file://${ca_crl_path}
-    auto = add
-
 conn %default
     keyexchange = ikev2
     dpdaction = clear

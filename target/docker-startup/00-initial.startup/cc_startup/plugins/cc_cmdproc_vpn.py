@@ -460,7 +460,7 @@ class VpnCommandProcessor(CommandProcessor):
         revoked_certs = []
         for client_cert in client_certs:
             if cert_serial == None or cert_serial == client_cert.get_serial_number():
-                ca.revoke_certificate(client_cert.get_serial_number(), "certificateHold")
+                ca.revoke_certificate(client_cert.get_serial_number(), "certificate_hold")
                 revoked_certs.append(client_cert)
 
         # abort, if no certificate was revoked

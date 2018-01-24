@@ -532,6 +532,19 @@ class CertificateAuthority:
     # -------------------------------------------------------------------------------------------------------------------------------------
 
 
+    REVOKE_REASON_MAP = {
+        "unspecified"            : x509.ReasonFlags.unspecified,
+        "key_compromise"         : x509.ReasonFlags.key_compromise,
+        "ca_compromise"          : x509.ReasonFlags.ca_compromise,
+        "affiliation_changed"    : x509.ReasonFlags.affiliation_changed,
+        "superseded"             : x509.ReasonFlags.superseded,
+        "cessation_of_operation" : x509.ReasonFlags.cessation_of_operation,
+        "certificate_hold"       : x509.ReasonFlags.certificate_hold,
+        "privilege_withdrawn"    : x509.ReasonFlags.privilege_withdrawn,
+        "aa_compromise"          : x509.ReasonFlags.aa_compromise,
+    }
+
+
     def revoke_certificate(self, serial_number, reason = "unspecified"):
         """
         Revokes the specified certificate.
@@ -555,6 +568,7 @@ class CertificateAuthority:
         """
 
         serial_number = int(serial_number)
+        revoke_reason = CertificateAuthority.REVOKE_REASON_MAP[reason]
 
         # get the certificate with the specified serial number
         cert = self.get_certificate(serial_number, raiseIfNotExist = True)
@@ -567,17 +581,18 @@ class CertificateAuthority:
         with open(self.__ca_crl_path, "rb") as f:
             old_crl = x509.load_pem_x509_crl(f.read(), default_backend())
 
-        # create new CRL and add the revoked certificate to it
+        # create new CRL and add the revoked certificate to it (the CRL does not expire - or at least nearly 'never' (10 years))
+        # (however... strongswan needs to be restarted to reread the CRL!)
         ski = ca_cert.to_cryptography().extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
         new_crl = x509.CertificateRevocationListBuilder()
         new_crl = new_crl.issuer_name(old_crl.issuer) \
                          .last_update(datetime.today()) \
-                         .next_update(datetime.today() + timedelta(30,0,0)) \
+                         .next_update(datetime.today() + timedelta(10*365,0,0)) \
                          .add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ski), False)
         for revoked_cert in old_crl: new_crl = new_crl.add_revoked_certificate(revoked_cert)
         new_crl = new_crl.add_revoked_certificate(x509.RevokedCertificateBuilder().serial_number(serial_number) \
                                                                                   .revocation_date(datetime.today()) \
-                                                                                  .add_extension(x509.CRLReason(x509.ReasonFlags.unspecified), False) \
+                                                                                  .add_extension(x509.CRLReason(revoke_reason), False) \
                                                                                   .build(default_backend())) \
                          .sign(private_key=ca_key.to_cryptography_key(), algorithm=hashes.SHA256(), backend=default_backend())
 

@@ -63,7 +63,11 @@ You can create a named volume using the following command:
 docker volume create strongswan-data
 ```
 
-### Step 3 - Run the StrongSwan Container
+### Step 3 - Initialize the Internal CA
+
+TODO
+
+### Step 4 - Run the StrongSwan Container
 
 Although the container comes with a set of sensible default settings, some settings still need to be configured to suit your needs:
 
@@ -176,7 +180,7 @@ Determines the fully qualified hostnames of the VPN server. The internal Certifi
 
 Default Value: *hostname of the container*
 
-### Step 4 - Attach Container to Additional Networks 
+### Step 5 - Attach Container to Additional Networks 
 
 At this stage the *strongswan* container should be able to accept VPN connections and allow VPN clients to access containers that are in the same user-defined network as the *strongswan* container. You can attach the *strongswan* container (named *strongswan-vpn*) to additional user-defined networks, so VPN clients can access them as well: 
 
@@ -184,11 +188,13 @@ At this stage the *strongswan* container should be able to accept VPN connection
 docker network connect <network> strongswan-vpn
 ```
 
-### Step 5 - Manage VPN Clients
+### Step 6 - Manage VPN Clients
 
 This step applys only, if the *strongswan* container is configured to use the internal CA to authenticate clients. This is the case, if you followed the setup steps up to this point. If the container is configured to use an external CA for client authentication, the following commands are without effect.
 
 A user (VPN client) is always identified by its e-mail address, so `<id>` in the examples below mean a valid e-mail address. Furthermore users authenticate themselves against the VPN server using client certificates. A VPN client can have multiple client certificates.
+
+Commands that add clients or enable/disable clients need the private key of the internal CA. The private key of the internal CA is stored on the volume. It is encrypted, if you entered a password when initializing the internal CA. In this case these commands need the password to perform the operation. The password can be specified via the command line parameter `--ca-pass` (not recommended, the password will be visible in the process list and via docker's inspection features). A better approach is to pipe the password in via *stdin*. The container must be run with the *interactive* flag (`-i`) to make it work. If you additionally attach a pseudo tty to the container you will be prompted to enter the password.
 
 All commands support two output formats that are optimized for interactive use (`text`) and for scripting (`tsv`, tab-separated-values). The output format can be explicitly set by the `--out-format=[text|tsv]` parameter when running the command using `docker run`. If `--out-format` is not specified, the output format depends on whether the container has a pseudo TTY attached or not. If the command is run using `docker run -it cloudycube/strongswan <cmd>` (terminal mode) the container uses the `text` format, otherwise it uses the `tsv` format (scripting mode).
 
@@ -250,18 +256,7 @@ docker run -it \
   disable client <id>
 ```
 
-#### Remove a Client
-
-TODO
-
-```
-docker run -it \
-  --volume strongswan-data:/data \
-  cloudycube/strongswan \
-  remove client <id>
-```
-
-### Step 6 - Extract Certificate of the Internal CA
+### Step 7 - Extract Certificate of the Internal CA
 
 This step is only necessary, if the VPN server uses a certificate that was issued by the internal CA. If the server uses a certificate that was provided explicitly, you should skip this step as the certificate of the internal CA is not needed by VPN clients to authenticate the server.
 
@@ -271,7 +266,7 @@ If the internal CA was used to create a certificate for the VPN server, clients 
 docker cp strongswan-vpn:/data/internal_ca/ca-cert.pem .
 ```
 
-### Step 7 - Configure Clients
+### Step 8 - Configure Clients
 
 TODO
 

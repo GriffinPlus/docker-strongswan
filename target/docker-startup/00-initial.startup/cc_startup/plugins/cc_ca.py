@@ -7,9 +7,16 @@ License: MIT License
 import os
 import sys
 
-from datetime import datetime
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.serialization import Encoding
+from cryptography.x509.oid import NameOID
+from datetime import datetime, timedelta
 from glob import iglob
 from OpenSSL import crypto, SSL
+from cryptography import x509
 from stat import S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP, S_IROTH, S_IWOTH
 from ..cc_log import Log
 from ..cc_helpers import is_email_address
@@ -395,14 +402,29 @@ class CertificateAuthority:
         ca_cert.set_issuer(ca_cert.get_subject())
         ca_cert.set_pubkey(ca_key)
         ca_cert.add_extensions([
-            crypto.X509Extension(b'basicConstraints', True, b'CA:TRUE, pathlen:0'),
-            crypto.X509Extension(b'keyUsage', True, b'keyCertSign, cRLSign')
+            crypto.X509Extension(b"basicConstraints", True, b"CA:TRUE, pathlen:0"),
+            crypto.X509Extension(b"keyUsage", True, b"keyCertSign, cRLSign"),
+            crypto.X509Extension(b"subjectKeyIdentifier", False, b"hash", subject=ca_cert),
         ])
+        ca_cert.add_extensions([
+          crypto.X509Extension(b"authorityKeyIdentifier", False, b"keyid:always", issuer=ca_cert)  
+        ])
+
         ca_cert.sign(ca_key, "sha256")
 
         # create the CRL
         # ---------------------------------------------------------------------
-        ca_crl = crypto.CRL()
+        ski = ca_cert.to_cryptography().extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+        ca_crl = x509.CertificateRevocationListBuilder() \
+            .issuer_name(x509.Name([ x509.NameAttribute(NameOID.COUNTRY_NAME, "DE"),
+                                     x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "Berlin"),
+                                     x509.NameAttribute(NameOID.LOCALITY_NAME, "Berlin"),
+                                     x509.NameAttribute(NameOID.ORGANIZATION_NAME, "CloudyCube"),
+                                     x509.NameAttribute(NameOID.COMMON_NAME, "Internal CA for VPN") ])) \
+            .last_update(datetime.today()) \
+            .next_update(datetime.today() + timedelta(30,0,0)) \
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ski), False) \
+            .sign(private_key = ca_key.to_cryptography_key(), algorithm=hashes.SHA256(), backend=default_backend())
 
         # write key, certificate and the CRL to disk
         # ---------------------------------------------------------------------
@@ -423,7 +445,9 @@ class CertificateAuthority:
 
             # CRL
             with open(self.__ca_crl_path, "wb") as f:
-                f.write(ca_crl.export(ca_cert, ca_key, days = 100, digest = b"sha256"))
+                f.write(ca_crl.public_bytes(Encoding.PEM))
+            os.chown(self.__ca_cert_path, 0, 0)
+            os.chmod(self.__ca_cert_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
 
         except:
 
@@ -516,12 +540,14 @@ class CertificateAuthority:
             serial_number (int) : Serial number of the certificate to revoke
             reason (str)        : Reason of the revocation. May be one of the following:
                                   - 'unspecified'
-                                  - 'keyCompromise'
-                                  - 'CACompromise'
-                                  - 'affiliationChanged'
+                                  - 'key_compromise'
+                                  - 'ca_compromise'
+                                  - 'affiliation_changed'
                                   - 'superseded'
-                                  - 'cessationOfOperation'
-                                  - 'certificateHold'
+                                  - 'cessation_of_operation'
+                                  - 'certificate_hold'
+                                  - 'privilege_withdrawn'
+                                  - 'aa_compromise'
 
         Exceptions:
             NotFoundError, if the specified certificate does not exist.
@@ -537,25 +563,31 @@ class CertificateAuthority:
         ca_key = self.key
         ca_cert = self.cert
 
-        # update the CRL
-        with open(self.__ca_crl_path, "rb+") as f:
+        # load the old CRL
+        with open(self.__ca_crl_path, "rb") as f:
+            old_crl = x509.load_pem_x509_crl(f.read(), default_backend())
 
-            # read CRL
-            crl = f.read()
-            crl = crypto.load_crl(crypto.FILETYPE_PEM, crl)
+        # create new CRL and add the revoked certificate to it
+        ski = ca_cert.to_cryptography().extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+        new_crl = x509.CertificateRevocationListBuilder()
+        new_crl = new_crl.issuer_name(old_crl.issuer) \
+                         .last_update(datetime.today()) \
+                         .next_update(datetime.today() + timedelta(30,0,0)) \
+                         .add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ski), False)
+        for revoked_cert in old_crl: new_crl = new_crl.add_revoked_certificate(revoked_cert)
+        new_crl = new_crl.add_revoked_certificate(x509.RevokedCertificateBuilder().serial_number(serial_number) \
+                                                                                  .revocation_date(datetime.today()) \
+                                                                                  .add_extension(x509.CRLReason(x509.ReasonFlags.unspecified), False) \
+                                                                                  .build(default_backend())) \
+                         .sign(private_key=ca_key.to_cryptography_key(), algorithm=hashes.SHA256(), backend=default_backend())
 
-            # add revoked certificate to CRL
-            revoked = crypto.Revoked()
-            revoked.set_rev_date(datetime.utcnow().strftime("%Y%m%d%H%M%SZ").encode("ascii"))
-            revoked.set_serial("{0:X}".format(cert.get_serial_number()).encode("ascii"))
-            revoked.set_reason(reason.encode("ascii"))
-            crl.add_revoked(revoked)
+        # write the new CRL into a temporary file
+        temp_path = self.__ca_crl_path + ".tmp"
+        with open(temp_path, "wb+") as f:
+            f.write(new_crl.public_bytes(Encoding.PEM))
 
-            # write CRL
-            f.seek(0)
-            f.truncate()
-            f.write(crl.export(ca_cert, ca_key, crypto.FILETYPE_PEM, days = 100, digest = b"sha256"))
-
+        # rename the temporary CRL file to the final file
+        os.replace(temp_path, self.__ca_crl_path)
 
     # -------------------------------------------------------------------------------------------------------------------------------------
 
@@ -581,26 +613,36 @@ class CertificateAuthority:
         ca_key = self.key
         ca_cert = self.cert
 
-        # update the CRL
-        with open(self.__ca_crl_path, "rb+") as f:
+        # load the old CRL
+        with open(self.__ca_crl_path, "rb") as f:
+            old_crl = x509.load_pem_x509_crl(f.read(), default_backend())
 
-            # read CRL
-            crl = f.read()
-            crl = crypto.load_crl(crypto.FILETYPE_PEM, crl)
+        # create new CRL
+        ski = ca_cert.to_cryptography().extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+        new_crl = x509.CertificateRevocationListBuilder()
+        new_crl = new_crl.issuer_name(old_crl.issuer) \
+                         .last_update(datetime.today()) \
+                         .next_update(datetime.today() + timedelta(30,0,0)) \
+                         .add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ski), False)
 
-            # copy CRL, but remove the specified certificate
-            new_crl = crypto.CRL()
-            removed = False
-            for revoked in crl.get_revoked():
-                if int(revoked.get_serial(), 16) != serial_number:
-                    new_crl.add_revoked(revoked)
-                    removed = True
+        # copy all revoked certificates except the one to remove into the new CRL
+        removed = False
+        for revoked_cert in old_crl:
+            if revoked_cert.serial_number == serial_number:
+                removed = True
+                continue
+            new_crl = new_crl.add_revoked_certificate(revoked_cert)
 
-            # write new CRL, if necessary
-            if removed:
-                f.seek(0)
-                f.truncate()
-                f.write(new_crl.export(ca_cert, ca_key, crypto.FILETYPE_PEM, days = 100, digest = b"sha256"))
+        # sign the new CRL
+        new_crl = new_crl.sign(private_key=ca_key.to_cryptography_key(), algorithm=hashes.SHA256(), backend=default_backend())
+
+        # write the new CRL into a temporary file
+        temp_path = self.__ca_crl_path + ".tmp"
+        with open(temp_path, "wb+") as f:
+            f.write(new_crl.public_bytes(Encoding.PEM))
+
+        # rename the temporary CRL file to the final file
+        os.replace(temp_path, self.__ca_crl_path)
 
 
     # -------------------------------------------------------------------------------------------------------------------------------------
@@ -672,8 +714,14 @@ class CertificateAuthority:
             # -------------------------------------------------------------------------------------
             # ikeIntermediate (1.3.6.1.5.5.8.2.2) is required OS X 10.7.3 or older
             # -------------------------------------------------------------------------------------
-            crypto.X509Extension(b'extendedKeyUsage', False, b'clientAuth, 1.3.6.1.5.5.8.2.2')
+            crypto.X509Extension(b'extendedKeyUsage', False, b'clientAuth, 1.3.6.1.5.5.8.2.2'),
+
+            # subjectKeyIdentifier and authorityKeyIdentifier
+            # -------------------------------------------------------------------------------------
+            crypto.X509Extension(b"subjectKeyIdentifier", False, b"hash", subject = client_cert),
+            crypto.X509Extension(b"authorityKeyIdentifier", False, b"keyid:always", issuer = ca_cert),
         ])
+
         client_cert.sign(ca_key, "sha256")
 
         # write the client's certificate to the storage directory
@@ -860,7 +908,12 @@ class CertificateAuthority:
             # serverAuth (1.3.6.1.5.5.7.3.1) is required by the built-in Windows 7 VPN client
             # ikeIntermediate (1.3.6.1.5.5.8.2.2) is required OS X 10.7.3 or older
             # -------------------------------------------------------------------------------------
-            crypto.X509Extension(b'extendedKeyUsage', False, b'serverAuth, 1.3.6.1.5.5.8.2.2')
+            crypto.X509Extension(b'extendedKeyUsage', False, b'serverAuth, 1.3.6.1.5.5.8.2.2'),
+
+            # subjectKeyIdentifier and authorityKeyIdentifier
+            # -------------------------------------------------------------------------------------
+            crypto.X509Extension(b"subjectKeyIdentifier", False, b"hash", subject = server_cert),
+            crypto.X509Extension(b"authorityKeyIdentifier", False, b"keyid:always", issuer = ca_cert),
         ])
         server_cert.sign(ca_key, "sha256")
 

@@ -65,7 +65,30 @@ docker volume create strongswan-data
 
 ### Step 3 - Initialize the Internal CA
 
-TODO
+The *strongswan* container assists with setting up a basic *Public Key Infrastructure (PKI)*. The internal CA maintained by the container itself provides everything needed to generate *server certificates* to authenticate the server, *client certificates* to authenticate clients and a *Certificate Revocation List (CRL)* to disable clients by revoking the corresponding certificates.
+
+The internal CA can be set up interactively (you will be prompted to enter a password to protect the CA's private key):
+
+```
+docker run -it \
+  -v strongswan-data:/data \
+  cloudycube/strongswan \
+  init
+```
+
+or in a scripted fashion using the `--ca-pass` command line parameter or *stdin* to pipe the password in (recommended):
+
+```
+docker run \
+  -v strongswan-data:/data \
+  cloudycube/strongswan \
+  init --ca-pass=my-ca-pass
+  
+echo "my-ca-secret" | docker run -i \
+  -v strongswan-data:/data \
+  cloudycube/strongswan \
+  init
+```
 
 ### Step 4 - Run the StrongSwan Container
 

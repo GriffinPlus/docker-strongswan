@@ -65,9 +65,9 @@ docker volume create strongswan-data
 
 ### Step 3 - Initialize the Internal CA
 
-The *strongswan* container assists with setting up a basic *Public Key Infrastructure (PKI)*. The internal CA maintained by the container itself provides everything needed to generate *server certificates* to authenticate the server, *client certificates* to authenticate clients and a *Certificate Revocation List (CRL)* to disable clients by revoking the corresponding certificates.
+The *strongswan* container assists with setting up a basic *Public Key Infrastructure (PKI)*. The internal CA maintained by the container itself provides everything needed to generate *server certificates* to authenticate the server, *client certificates* to authenticate clients and a *Certificate Revocation List (CRL)* to disable clients by revoking the corresponding certificates. All RSA keys are 4096 bit. The expiry period of the CA certificate and the generated CRL is 10 years. Such a long expiry period is rather uncommon for CAs, but it ensures that *strongswan* remains working. An expired CRL would otherwise block all connections to the VPN server.
 
-The internal CA can be set up interactively (you will be prompted to enter a password to protect the CA's private key):
+The internal CA can be set up interactively using the following command. You will be prompted to enter a password to protect the CA's private key.
 
 ```
 docker run -it \
@@ -76,7 +76,7 @@ docker run -it \
   init
 ```
 
-or in a scripted fashion using the `--ca-pass` command line parameter or *stdin* to pipe the password in (recommended):
+The internal CA can be initialized using the `--ca-pass` command line parameter or *stdin* to pipe the password in as well. Using *stdin* is the recommended way as the password cannot leak via process lists or docker's inspection features:
 
 ```
 docker run \

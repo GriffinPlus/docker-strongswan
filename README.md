@@ -16,6 +16,7 @@ This is a Docker image deriving from the [base-supervisor](https://github.com/cl
 
 The image provides the following features:
 - StrongSwan Version 5.6.1
+- Road Warrior Setup for Remote Access / Mobile Devices
 - Dual-Stack Tunnel Broker (IPv4-over-IPv4, IPv4-over-IPv6, IPv6-over-IPv4, IPv6-over-IPv4)
 - Authentication Methods
   - IKEv2 certificate authentication

@@ -76,7 +76,7 @@ docker run -it \
   init
 ```
 
-The internal CA can be initialized using the `--ca-pass` command line parameter or *stdin* to pipe the password in as well. Using *stdin* is the recommended way as the password cannot leak via process lists or docker's inspection features:
+The internal CA can be initialized using the `--ca-pass` command line parameter or *stdin* to feed in the password as well. Using *stdin* is the recommended way as the password cannot leak via process lists or docker's inspection features:
 
 ```
 docker run \
@@ -95,7 +95,7 @@ echo "<my-ca-secret>" | docker run -i \
 Although the container comes with a set of sensible default settings, some settings still need to be configured to suit your needs:
 
 ```
-docker run \
+docker run -it \
   --name strongswan-vpn \
   --ip6=2001:xxxx:xxxx:xxxx::2 \
   --network internet \
@@ -215,7 +215,7 @@ docker network connect <network> strongswan-vpn
 
 This step applys only, if the *strongswan* container is configured to use the internal CA to authenticate clients. This is the case, if you followed the setup steps up to this point. If the container is configured to use an external CA for client authentication, the following commands are without effect.
 
-A user (VPN client) is always identified by its e-mail address, so `<id>` in the examples below mean a valid e-mail address. Furthermore users authenticate themselves against the VPN server using client certificates. A VPN client can have multiple client certificates.
+A user (VPN client) is always identified by its e-mail address, so `<id>` in the examples below means a valid e-mail address. Furthermore users authenticate themselves against the VPN server using client certificates. A VPN client can have multiple client certificates.
 
 Commands that add clients or enable/disable clients need the private key of the internal CA. The private key of the internal CA is stored on the volume. It is encrypted, if you entered a password when initializing the internal CA. In this case these commands need the password to perform the operation. The password can be specified via the command line parameter `--ca-pass` (not recommended, the password will be visible in the process list and via docker's inspection features). A better approach is to pipe the password in via *stdin*. The container must be run with the *interactive* flag (`-i`) to make it work. If you additionally attach a pseudo tty to the container you will be prompted to enter the password.
 
@@ -257,7 +257,7 @@ docker run \
 A new VPN client - respectively a client certificate for a VPN client - can be created interactively or in a scripted fashion using the internal CA as follows:
 
 ```
-# interactive
+# password prompt (interactive)
 docker run -it \
   -v strongswan-data:/data \
   -v $PWD/client-data/:/data-out \
@@ -279,7 +279,7 @@ echo "<my-ca-secret>\n<my-pkcs12-secret>" | docker run -i \
   add client <id>
 ```
 
-This assumes that you have a directory `client-data` below your working directory. The internal CA will create a new 4096 bit RSA private key, a client certificate with an expiry period of 2 years and package everything together in a PKCS12 archive (most commonly known as `.pfx` or `.p12` file). If the internal CA also creates the certificate for *strongswan*, the PKCS12 archive will also contain the CA certificate, so the VPN client will be able to check the authenticity of the VPN server. The PKCS12 archive is encrypted using the specified password and saved to the mounted output directory (`$PWD/client-data`).
+This example assumes that you have a directory `client-data` below your working directory. The internal CA will create a new 4096 bit RSA private key, a client certificate with an expiry period of 2 years and package everything together in a PKCS12 archive (most commonly known as `.pfx` or `.p12` file). If the internal CA also creates the certificate for *strongswan*, the PKCS12 archive will also contain the CA certificate, so the VPN client will be able to check the authenticity of the VPN server. The PKCS12 archive is encrypted using the specified password and saved to the mounted output directory (`$PWD/client-data`).
 
 Mixing command line parameters and *stdin* is also supported, but when *stdin* is used the order of parameters is significant:
   1) Password of the CA
@@ -287,40 +287,38 @@ Mixing command line parameters and *stdin* is also supported, but when *stdin* i
 
 Specifying `--ca-pass` or `--pkcs12-pass` overrides the corresponding passwords piped in via *stdin*.
 
-#### Enabling/Disabling a Client
+#### Disabling/Re-enabling a Client
 
-TODO
+A VPN client can be disabled by revoking its client certificate and re-enabled by unrevoking the certificate. Revocations are stored in the *Certificate Revocation List (CRL)* of the internal CA and the CRL is read by *strongswan* at startup. After revoking/unrevoking a client certificate the *strongswan* container must be restarted, so *strongswan* reloads the CRL and the change becomes active. CRLs are a rather cumbersome thing to realize this functionality, but they are easier to handle than setting up an OCSP responder as professional CAs would do. The internal CA is made for tests and small scale deployments. If you plan to use this container in a large scale deployment, you should really consider using an external CA instead.
+
+As with the other commands the password of the internal CA can be entered interactively, by command line parameter or via *stdin*. A certain certificate can be revoked/unrevoked by specifying its certificate serial number. If the serial number if omitted, all active certificates will be revoked.
 
 ```
+# password prompt (interactive)
 docker run -it \
   --volume strongswan-data:/data \
   cloudycube/strongswan \
-  enable client <id>
+  disable|enable client <id> [<certificate-serial>]
+
+# password via command line parameters
+docker run \
+  --volume strongswan-data:/data \
+  cloudycube/strongswan \
+  disable|enable client <id> [<certificate-serial>] --ca-pass=<my-ca-secret>
   
-docker run -it \
+# password via stdin
+echo "<my-ca-secret>" | docker run -i \
   --volume strongswan-data:/data \
   cloudycube/strongswan \
-  disable client <id>
+  disable|enable client <id> [<certificate-serial>]
 ```
 
-### Step 7 - Extract Certificate of the Internal CA
+## Customizations
 
-This step is only necessary, if the VPN server uses a certificate that was issued by the internal CA. If the server uses a certificate that was provided explicitly, you should skip this step as the certificate of the internal CA is not needed by VPN clients to authenticate the server.
+Many customizations have already discussed above as they are configured using environment variables when running the container. Below you will find customizations that cannot be realized using configuration only.
 
-If the internal CA was used to create a certificate for the VPN server, clients need to import the certificate of the CA into their certificate storage. The following command extracts the certificate (*ca-cert.pem*) of the internal CA from the container and puts it into the current directory:
+### Using an External CA (TODO!)
 
-```
-docker cp strongswan-vpn:/data/internal_ca/ca-cert.pem .
-```
+By default the *strongswan* container uses the internal CA to create the server certificate to authenticate the VPN server and client certificates to authenticate VPN clients. If you are concerned about security, you can use an external CA - most probably part of your corporate PKI - instead.
 
-### Step 8 - Configure Clients
-
-TODO
-
-#### Internal CA created the Server Certificate
-
-TODO
-
-#### External CA created the Server Certificate
-
-TODO
+The *strongswan* container will take your external CA into account, if you provide the files `server.key` and `server.crt` containing the private key and the certificate for *strongswan* in `/external-ca`. This is enough to configure *strongswan* to authenticate itself using the specified certificate. If you specify `client-ca.crt` as well, *strongswan* will furthermore be configured to authenticate clients that have a valid client certificate issued by the associated CA. Key files and certificate files can either be PEM- or DER-encoded.

@@ -254,25 +254,32 @@ docker run \
 
 #### Adding a Client
 
-A new VPN client - respectively a client certificate for a VPN client - can be created using the internal CA as follows:
+A new VPN client - respectively a client certificate for a VPN client - can be created interactively or in a scripted fashion using the internal CA as follows:
 
 ```
+# interactive
 docker run -it \
   -v strongswan-data:/data \
   -v $PWD/client-data/:/data-out \
   cloudycube/strongswan \
+  add client <id>
+
+# passwords via command line parameters
+docker run \
+  -v strongswan-data:/data \
+  -v $PWD/client-data/:/data-out \
+  cloudycube/strongswan \
   add client <id> --ca-pass=<my-ca-secret> --pkcs12-pass=<my-pkcs12-secret>
-```
 
-This assumes that you have a directory `client-data` below your working directory. The internal CA will create a new private key, a client certificate and package everything together in a PKCS12 archive (most commonly known as `.pfx` or `.p12` file). The PKCS12 archive is encrypted using the specified password. For security reasons the passwords can be piped in via *stdin* as well:
-
-```
+# passwords via stdin
 echo "<my-ca-secret>\n<my-pkcs12-secret>" | docker run -i \
   -v strongswan-data:/data \
   -v $PWD/client-data/:/data-out \
   cloudycube/strongswan \
   add client <id>
 ```
+
+This assumes that you have a directory `client-data` below your working directory. The internal CA will create a new 4096 bit RSA private key, a client certificate with an expiry period of 2 years and package everything together in a PKCS12 archive (most commonly known as `.pfx` or `.p12` file). If the internal CA also creates the certificate for *strongswan*, the PKCS12 archive will also contain the CA certificate, so the VPN client will be able to check the authenticity of the VPN server. The PKCS12 archive is encrypted using the specified password and saved to the mounted output directory (`$PWD/client-data`).
 
 Mixing command line parameters and *stdin* is also supported, but when *stdin* is used the order of parameters is significant:
   1) Password of the CA

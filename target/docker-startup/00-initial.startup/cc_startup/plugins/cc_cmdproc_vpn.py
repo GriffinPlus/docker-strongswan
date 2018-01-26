@@ -10,6 +10,7 @@ import socket
 import sys
 
 from datetime import datetime
+from getpass import getpass
 from OpenSSL import crypto
 from mako.template import Template
 from netaddr import IPAddress, IPNetwork, AddrFormatError
@@ -211,8 +212,12 @@ class VpnCommandProcessor(CommandProcessor):
         # query user to enter the password, if it was not specified in the command line
         if ca_pass == None:
             if sys.stdin.isatty():
-                ca_pass = input("Please enter the password to protect the CA with: ").strip()
-                if len(ca_pass) == 0:
+                ca_pass = getpass("Please enter the password to protect the CA with: ").strip()
+                if len(ca_pass) > 0:
+                    ca_pass_verify = getpass("Please enter the password once again: ").strip()
+                    if ca_pass != ca_pass_verify:
+                        raise cc_ca.InvalidPasswordError("Password verification failed.")
+                else:
                     print("The password is empty. CA related data is not encrypted!")
             else:
                 raise cc_ca.PasswordRequiredError("Please specify the CA password as command line argument or run the container in terminal mode, if you want to enter the password interactively.")
@@ -305,8 +310,12 @@ class VpnCommandProcessor(CommandProcessor):
         # -----------------------------------------------------------------------------------------
         if pkcs12_pass == None:
             if sys.stdin.isatty():
-                pkcs12_pass = input("Please enter the password for the PKCS12 file: ").strip()
-                if len(pkcs12_pass) == 0:
+                pkcs12_pass = getpass("Please enter the password for the PKCS12 file: ").strip()
+                if len(pkcs12_pass) > 0:
+                    pkcs12_pass_verify = getpass("Please enter the password once again: ").strip()
+                    if pkcs12_pass != pkcs12_pass_verify:
+                        raise cc_ca.InvalidPasswordError("Password verification failed.")
+                else:
                     print("WARNING: The password is empty, the PKCS12 file is not encrypted.")
             else:
                 raise cc_ca.PasswordRequiredError("Please specify the password for the PKCS12 file as command line argument (--pkcs12-pass) or run the container in terminal mode, if you want to enter the password interactively.")
@@ -676,6 +685,8 @@ class VpnCommandProcessor(CommandProcessor):
         # setup cryptographic stuff
         # -------------------------------------------------------------------------------------------------------------
         self.__ca = cc_ca.CertificateAuthority()
+        if not self.__ca.is_inited():
+            raise cc_ca.NotInitializedError("The CA is not initialized.")
         self.__init_pki_for_server(named_args)
         self.__init_pki_for_clients()
 
@@ -1139,7 +1150,7 @@ class VpnCommandProcessor(CommandProcessor):
                 if len(named_args["ca-pass"]) > 0: ca_pass = named_args[0]
                 if ca_pass == None:
                     if sys.stdin.isatty():
-                        ca_pass = input("Please enter the password of the CA: ").strip()
+                        ca_pass = getpass("Please enter the password of the CA: ").strip()
                     else:
                         raise cc_ca.PasswordRequiredError("Please specify the CA password as command line argument or run the container in terminal mode, if you want to enter the password interactively.")
                 self.__ca.password = ca_pass
@@ -1476,7 +1487,7 @@ class VpnCommandProcessor(CommandProcessor):
                 # query user to enter the CA password, if it was not specified in the command line
                 if ca_pass == None:
                     if sys.stdin.isatty():
-                        ca_pass = input("Please enter the password of the CA: ").strip()
+                        ca_pass = getpass("Please enter the password of the CA: ").strip()
                     else:
                         raise cc_ca.PasswordRequiredError("Please specify the CA password as command line argument or run the container in terminal mode, if you want to enter the password interactively.")
 

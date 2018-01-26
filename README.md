@@ -82,9 +82,9 @@ The internal CA can be initialized using the `--ca-pass` command line parameter 
 docker run \
   -v strongswan-data:/data \
   cloudycube/strongswan \
-  init --ca-pass=my-ca-pass
+  init --ca-pass=<my-ca-secret>
   
-echo "my-ca-secret" | docker run -i \
+echo "<my-ca-secret>" | docker run -i \
   -v strongswan-data:/data \
   cloudycube/strongswan \
   init
@@ -254,14 +254,31 @@ docker run \
 
 #### Adding a Client
 
-TODO
+A new VPN client - respectively a client certificate for a VPN client - can be created using the internal CA as follows:
 
 ```
 docker run -it \
-  --volume strongswan-data:/data \
+  -v strongswan-data:/data \
+  -v $PWD/client-data/:/data-out \
   cloudycube/strongswan \
-  add client <id> <pass>
+  add client <id> --ca-pass=<my-ca-secret> --pkcs12-pass=<my-pkcs12-secret>
 ```
+
+This assumes that you have a directory `client-data` below your working directory. The internal CA will create a new private key, a client certificate and package everything together in a PKCS12 archive (most commonly known as `.pfx` or `.p12` file). The PKCS12 archive is encrypted using the specified password. For security reasons the passwords can be piped in via *stdin* as well:
+
+```
+echo "<my-ca-secret>\n<my-pkcs12-secret>" | docker run -i \
+  -v strongswan-data:/data \
+  -v $PWD/client-data/:/data-out \
+  cloudycube/strongswan \
+  add client <id>
+```
+
+Mixing command line parameters and *stdin* is also supported, but when *stdin* is used the order of parameters is significant:
+  1) Password of the CA
+  2) Password for the PKCS12 archive
+
+Specifying `--ca-pass` or `--pkcs12-pass` overrides the corresponding passwords piped in via *stdin*.
 
 #### Enabling/Disabling a Client
 

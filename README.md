@@ -159,6 +159,17 @@ In order to use a GUA subnet you must configure your host to forward packets tha
 ip -6 route add <client-subnet> via <container-ip>
 ```
 
+Furthermore the ISP needs to know which IPv6 addresses are in use to route traffic for these addresses to the host. The *strongswan* container maintains the NDP proxy table as VPN clients connect/disconnect. But this information is available from within the container only. An *nddpd* with the following configuration takes the information out to the ISP (most probably you already have *ndppd* in place to get IPv6 working with docker):
+
+```
+# /etc/ndppd.conf
+proxy eth0 {
+  rule <client-subnet> {
+    auto
+  }
+}
+```
+
 Default: `fd00:DEAD:BEEF:AFFE::/64` (ULA, Site-ID: `DEAD:BEEF`, Subnet-ID: `AFFE`)
 
 #### DNS_SERVERS

@@ -352,4 +352,4 @@ PS C:\> Add-VpnConnection -Name "My-VPN-Connection" -ServerAddress "vpn.my-domai
 
 ### Android StrongSwan App
 
-TODO
+The [StrongSwan App](https://play.google.com/store/apps/details?id=org.strongswan.android) is the natural choice when connecting an Android device to the VPN server. The app takes the PKCS12 file as is, you do not need to import certificates into the certificate store. Choose *IKEv2 Certificate* or *IKEv2 EAP-TLS* as VPN type and everything should work.

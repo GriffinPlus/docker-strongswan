@@ -16,6 +16,7 @@ conn %default
     leftcert = ${server_cert_path}
     leftsendcert = always
     leftfirewall = no
+    leftupdown = /etc/strongswan-updown.sh
     right = %any
     rightsourceip = ${client_ip_range_start_ipv4}-${client_ip_range_end_ipv4}, ${client_ip_range_start_ipv6}-${client_ip_range_end_ipv6}
     rightdns = ${own_ip_in_client_subnet_ipv4}, ${own_ip_in_client_subnet_ipv6}

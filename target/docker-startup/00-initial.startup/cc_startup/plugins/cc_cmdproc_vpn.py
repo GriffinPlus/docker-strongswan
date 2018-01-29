@@ -62,18 +62,15 @@ STRONGSWAN_CONF_PATH             = "/etc/strongswan.conf"
 STRONGSWAN_CONF_TEMPLATE_PATH    = "/etc/strongswan.conf.mako"
 NAMED_CONF_OPTIONS_PATH          = "/etc/bind/named.conf.options"
 NAMED_CONF_OPTIONS_TEMPLATE_PATH = "/etc/bind/named.conf.options.mako"
-NDPPD_CONF_PATH                  = "/etc/ndppd.conf"
-NDPPD_CONF_TEMPLATE_PATH         = "/etc/ndppd.conf.mako"
-SUPERVISORD_NDPPD_CONF_PATH      = "/etc/supervisor/conf.d/ndppd.conf"
 
 # path of the data output directory
 OUTPUT_DIRECTORY = "/data-out"
 
 # paths of keys/certificates, when an external CA is used
-EXTERNAL_PKI_BASE_DIR          = "/data/external_ca"
-EXTERNAL_PKI_CA_CERT_FILE      = os.path.join(EXTERNAL_PKI_BASE_DIR, "ca-cert.crt")
-EXTERNAL_PKI_SERVER_CERT_FILE  = os.path.join(EXTERNAL_PKI_BASE_DIR, "server.crt")
-EXTERNAL_PKI_SERVER_KEY_FILE   = os.path.join(EXTERNAL_PKI_BASE_DIR, "server.key")
+EXTERNAL_PKI_BASE_DIR             = "/external-ca"
+EXTERNAL_PKI_CLIENT_CA_CERT_FILE  = os.path.join(EXTERNAL_PKI_BASE_DIR, "client-ca.crt")
+EXTERNAL_PKI_SERVER_CERT_FILE     = os.path.join(EXTERNAL_PKI_BASE_DIR, "server.crt")
+EXTERNAL_PKI_SERVER_KEY_FILE      = os.path.join(EXTERNAL_PKI_BASE_DIR, "server.key")
 
 # paths of keys/certificates, when the internal CA is used
 INTERNAL_PKI_BASE_DIR          = "/data/internal_ca"
@@ -762,17 +759,6 @@ class VpnCommandProcessor(CommandProcessor):
         with open(STRONGSWAN_CONF_PATH, "wt") as f:
             f.write(rendered)
 
-        # generate ndppd.conf
-        # -------------------------------------------------------------------------------------------------------------
-        rendered = Template(filename = NDPPD_CONF_TEMPLATE_PATH).render(**template_context)
-        with open(NDPPD_CONF_PATH, "wt") as f:
-            f.write(rendered)
-
-        # disable ndppd, if VPN clients do not have global addresses (no need for neighbor discovery)
-        # -------------------------------------------------------------------------------------------------------------
-        if not self.__client_subnet_ipv6_is_gua:
-            os.rename(SUPERVISORD_NDPPD_CONF_PATH, SUPERVISORD_NDPPD_CONF_PATH + ".inactive")
-
         # remount /proc/sys read-write to enable 'sysctl' to work properly
         # (only needed, if the container is not run in privileged mode)
         # -------------------------------------------------------------------------------------------------------------
@@ -808,6 +794,9 @@ class VpnCommandProcessor(CommandProcessor):
 
         # accept router advertisements on eth0, although we're forwarding packets
         run(["sysctl", "-w", "net.ipv6.conf.eth0.accept_ra=2"], check=True, stdout=DEVNULL)
+
+        # enable NDP proxying
+        run(["sysctl", "-w", "net.ipv6.conf.all.proxy_ndp=1"], check=True, stdout=DEVNULL)
 
         # do not accept ICMP redirects (prevent MITM attacks)
         run(["sysctl", "-w", "net.ipv4.conf.all.accept_redirects=0"], check=True, stdout=DEVNULL)
@@ -901,7 +890,7 @@ class VpnCommandProcessor(CommandProcessor):
         iptables_run(["-N", "AllowICMP_I"])
         iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "0"])
         iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "3"])
-        iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "8", "-m", "limit", "--limit", "5/sec", "--limit-burst", "20"])
+        iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "8", "-m", "limit", "--limit", "5/sec", "--limit-burst", "10"])
         iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "11"])
         iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "12"])
         iptables_add("AllowICMP_I", "ACCEPT", ["-p", "icmp", "--icmp-type", "30"])
@@ -911,7 +900,7 @@ class VpnCommandProcessor(CommandProcessor):
         iptables_run(["-N", "AllowICMP_F"])
         iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "0"])
         iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "3"])
-        iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "8", "-m", "limit", "--limit", "5/sec", "--limit-burst", "20"])
+        iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "8", "-m", "limit", "--limit", "5/sec", "--limit-burst", "10"])
         iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "11"])
         iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "12"])
         iptables_add("AllowICMP_F", "ACCEPT", ["-p", "icmp", "--icmp-type", "30"])
@@ -1190,14 +1179,14 @@ class VpnCommandProcessor(CommandProcessor):
         """
         """
 
-        external_server_ca_cert_exists = os.path.exists(EXTERNAL_PKI_CA_CERT_FILE)
+        external_client_ca_cert_exists = os.path.exists(EXTERNAL_PKI_CLIENT_CA_CERT_FILE)
 
-        if external_server_ca_cert_exists:
+        if external_client_ca_cert_exists:
 
             Log.write_note("Found external CA certificate to use for client authentication.")
 
-            self.__ca_cert_path = EXTERNAL_PKI_CA_CERT_FILE
-            self.__ca_crl_path  = None  # get from environment
+            self.__ca_cert_path = EXTERNAL_PKI_CLIENT_CA_CERT_FILE
+            self.__ca_crl_path  = None  # get from environment (TODO)
 
         else:
 

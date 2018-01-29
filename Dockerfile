@@ -11,7 +11,6 @@ RUN \
   apt-get -y update && \
   apt-get -y install \
     bind9 \
-    ndppd \
     libcurl3 libgmp10 libssl1.0.0 \
     $DEV_PACKAGES && \
 
@@ -34,6 +33,11 @@ RUN \
 # Copy prepared files into the image
 # -----------------------------------------------------------------------------
 COPY target /
+
+# Adjust permissions of copied files
+# -----------------------------------------------------------------------------
+RUN \
+  chmod 750 /etc/strongswan-updown.sh
 
 # Volumes
 # -----------------------------------------------------------------------------

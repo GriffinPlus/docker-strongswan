@@ -343,7 +343,7 @@ Windows Registry Editor Version 5.00
 | 1	    | Enable AES-256-CBC and MODP-2048
 | 2	    | Enforce the usage of AES-256-CBC and MODP-2048
 
-With this tiny modification, Windows 10 and *strongswan* will play together securely. Before we can set up a VPN connection, we need to import the client's private key and the client certificate. The certificate of the internal CA must be imported as well, if the server certificate was created by the internal CA. Everything needed is contained in the PKCS12 archive that is created when adding a VPN client (see above). The VPN connection can now be set up manually (IKEv2, Authentication with EAP-TLS using certificates). Alternatively the following PowerShell script can be used as well (please adjust `-ServerAddress` to fit your setup):
+With this tiny modification, Windows 10 and *strongswan* will play together securely. Before you can set up a VPN connection, you need to import the client's private key and the client certificate into the **user's certificate store** and the certificate of the internal CA into the **machine certificate store**. The key and the certificates are contained in the PKCS12 archive that is created when adding a VPN client (see above). Sad to say that you have to import the PKCS12 archive twice to get the certificates in place (if somebody knows, why this is necessary and how one can circumvent this issue, please let me know!). The VPN connection can now be set up manually (IKEv2, Authentication with EAP-TLS using certificates). Alternatively the following PowerShell script can be used as well (please adjust `-ServerAddress` to fit your setup):
 
 ```
 PS C:\> $tlsauth = New-EapConfiguration -tls -VerifyServerIdentity -UserCertificate

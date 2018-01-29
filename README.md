@@ -318,8 +318,38 @@ echo "<my-ca-secret>" | docker run -i \
 
 Many customizations have already discussed above as they are configured using environment variables when running the container. Below you will find customizations that cannot be realized using configuration only.
 
-### Using an External CA (TODO!)
+### Using an External CA
 
 By default the *strongswan* container uses the internal CA to create the server certificate to authenticate the VPN server and client certificates to authenticate VPN clients. If you are concerned about security, you can use an external CA - most probably part of your corporate PKI - instead.
 
 The *strongswan* container will take your external CA into account, if you provide the files `server.key` and `server.crt` containing the private key and the certificate for *strongswan* in `/external-ca`. This is enough to configure *strongswan* to authenticate itself using the specified certificate. If you specify `client-ca.crt` as well, *strongswan* will furthermore be configured to authenticate clients that have a valid client certificate issued by the associated CA. Key files and certificate files can either be PEM- or DER-encoded.
+
+## Configuring Clients
+
+### Windows 10 (Desktop, Integrated VPN Client)
+
+By default, the *Windows 10 Integrated VPN Client* only offers a rather insecure set of algorithms. Other sites have illustrated this issue extensively, so here is the extract of the discussion only. The algorithms proposed by Windows 10 will not work with the algorithms proposed by shipped version of *strongswan* out-of-the-box. Older versions of *strongswan* and Windows 10 agreed on using `3DES_CBC/HMAC_SHA1_96/PRF_HMAC_SHA1/MODP_1024`, but neither *3DES_CBC* for encryption nor a 1024 bit Diffie-Hellman group is a secure choice nowadays. That is why newer releases of *strongswan* disable these algorithms breaking compatibility with the Windows 10 VPN client. Windows 10 can be configured to use more secure algorithms (AES_256_CBC for encryption and a 2048 bit Diffie-Hellman group) by adding the following registry snippet:
+
+```
+Windows Registry Editor Version 5.00
+
+[HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\RasMan\Parameters]
+"NegotiateDH2048_AES256"=dword:00000001
+```
+
+| Value | Meaning
+| :---: | :----------------------------------------------
+| 0     | Disable AES-256-CBC and MODP-2048 (default)
+| 1	    | Enable AES-256-CBC and MODP-2048
+| 2	    | Enforce the usage of AES-256-CBC and MODP-2048
+
+With this tiny modification, Windows 10 and *strongswan* will play together securely. Before we can set up a VPN connection, we need to import the client's private key and the client certificate. The certificate of the internal CA must be imported as well, if the server certificate was created by the internal CA. Everything needed is contained in the PKCS12 archive that is created when adding a VPN client (see above). The VPN connection can now be set up manually (IKEv2, Authentication with EAP-TLS using certificates). Alternatively the following PowerShell script can be used as well (please adjust `-ServerAddress` to fit your setup):
+
+```
+PS C:\> $tlsauth = New-EapConfiguration -tls -VerifyServerIdentity -UserCertificate
+PS C:\> Add-VpnConnection -Name "My-VPN-Connection" -ServerAddress "vpn.my-domain.com" -TunnelType "IKEv2" -EncryptionLevel "Required" -AuthenticationMethod Eap -EapConfigXmlStream $tlsauth.EapConfigXmlStream -PassThru
+```
+
+### Android StrongSwan App
+
+TODO

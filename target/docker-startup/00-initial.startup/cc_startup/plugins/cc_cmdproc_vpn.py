@@ -408,7 +408,7 @@ class VpnCommandProcessor(CommandProcessor):
     # Command Handler: disable client
     # -------------------------------------------------------------------------------------------------------------------------------------
 
-    
+
     def disable_client(self, pos_args, named_args):
         """
         Disables a client by revoking its client certificate(s)
@@ -438,7 +438,7 @@ class VpnCommandProcessor(CommandProcessor):
         elif len(pos_args) == 4:
             identity = pos_args[2]
             cert_serial = pos_args[3]
-        else:   
+        else:
             raise CommandLineArgumentError("Expecting 3 or 4 positional arguments, you specified {0} ({1})", len(pos_args), pos_args)
 
         # check format of the identity
@@ -491,7 +491,7 @@ class VpnCommandProcessor(CommandProcessor):
     # Command Handler: enable client
     # -------------------------------------------------------------------------------------------------------------------------------------
 
-    
+
     def enable_client(self, pos_args, named_args):
         """
         Enables a previously disabled client by unrevoking its client certificate(s)
@@ -521,7 +521,7 @@ class VpnCommandProcessor(CommandProcessor):
         elif len(pos_args) == 4:
             identity = pos_args[2]
             cert_serial = pos_args[3]
-        else:   
+        else:
             raise CommandLineArgumentError("Expecting 3 or 4 positional arguments, you specified {0} ({1})", len(pos_args), pos_args)
 
         # check format of the identity
@@ -780,20 +780,27 @@ class VpnCommandProcessor(CommandProcessor):
         Log.write_info("Configuring networking...")
 
         # add a dummy device with an ip address for the vpn server in the client network
-        run(["ip", "link", "add", "type", "dummy"], check=True, stdout=DEVNULL)
-        run(["ip", "addr", "add", str(self.__own_ip_in_client_subnet_ipv4) + "/" + str(self.__client_subnet_ipv4.prefixlen), "dev", "dummy0"], check=True, stdout=DEVNULL)
-        run(["ip", "addr", "add", str(self.__own_ip_in_client_subnet_ipv6) + "/" + str(self.__client_subnet_ipv6.prefixlen), "dev", "dummy0"], check=True, stdout=DEVNULL)
-        run(["ip", "link", "set", "up", "dummy0"], check=True, stdout=DEVNULL)
-        run(["ip", "route", "add", str(self.__own_ip_in_client_subnet_ipv4), "dev", "dummy0"], check=True, stdout=DEVNULL)
-        run(["ip", "route", "add", str(self.__own_ip_in_client_subnet_ipv6), "dev", "dummy0"], check=True, stdout=DEVNULL)
+        run(["ip", "link", "add", "internal0", "type", "dummy"], check=True, stdout=DEVNULL)
+        with open("/proc/sys/net/ipv6/conf/internal0/disable_ipv6", "w") as f: f.write("0")
+        run(["ip", "-4", "addr", "add", str(self.__own_ip_in_client_subnet_ipv4) + "/" + str(self.__client_subnet_ipv4.prefixlen), "dev", "internal0"], check=True, stdout=DEVNULL)
+        run(["ip", "-6", "addr", "add", str(self.__own_ip_in_client_subnet_ipv6) + "/" + str(self.__client_subnet_ipv6.prefixlen), "dev", "internal0"], check=True, stdout=DEVNULL)
+        run(["ip", "link", "set", "up", "internal0"], check=True, stdout=DEVNULL)
+        run(["ip", "-4", "route", "add", str(self.__own_ip_in_client_subnet_ipv4), "dev", "internal0"], check=True, stdout=DEVNULL)
+        run(["ip", "-6", "route", "add", str(self.__own_ip_in_client_subnet_ipv6), "dev", "internal0"], check=True, stdout=DEVNULL)
 
         # enable forwarding
         run(["sysctl", "-w", "net.ipv4.ip_forward=1"], check=True, stdout=DEVNULL)
         run(["sysctl", "-w", "net.ipv6.conf.default.forwarding=1"], check=True, stdout=DEVNULL)
         run(["sysctl", "-w", "net.ipv6.conf.all.forwarding=1"], check=True, stdout=DEVNULL)
 
-        # accept router advertisements on eth0, although we're forwarding packets
-        run(["sysctl", "-w", "net.ipv6.conf.eth0.accept_ra=2"], check=True, stdout=DEVNULL)
+        # tweak conntrack
+        run(["sysctl", "-w", "net.netfilter.nf_conntrack_helper=0"], check=True, stdout=DEVNULL)                   # helpers are a security risk, if not configured properly
+        run(["sysctl", "-w", "net.netfilter.nf_conntrack_tcp_loose=0"], check=True, stdout=DEVNULL)                # needed for TCP flood protection below
+        # run(["sysctl", "-w", "net.netfilter.nf_conntrack_max=2000000"], check=True, stdout=DEVNULL)                # 2 million entries á 288 bytes = 576MB
+        # run(["echo", "2000000", ">", "/sys/module/nf_conntrack/parameters/hashsize"], check=True, stdout=DEVNULL)  # 2 million entries á 8 bytes = 16MB
+
+        # do not accept router advertisements on eth0, we're using a static configuration
+        run(["sysctl", "-w", "net.ipv6.conf.eth0.accept_ra=0"], check=True, stdout=DEVNULL)
 
         # enable NDP proxying
         run(["sysctl", "-w", "net.ipv6.conf.all.proxy_ndp=1"], check=True, stdout=DEVNULL)
@@ -815,31 +822,68 @@ class VpnCommandProcessor(CommandProcessor):
 
         Log.write_info("=> Configuring firewall")
 
-        # filter all packets that have RH0 headers (deprecated, can be used for DoS attacks)
+        # block bogus packets, before they can reach conntrack
         # -------------------------------------------------------------------------------------------------------------
-        ip6tables_add("INPUT",   "DROP", ["-m", "rt", "--rt-type", "0"], "RH0 Exploit Protection")
-        ip6tables_add("FORWARD", "DROP", ["-m", "rt", "--rt-type", "0"], "RH0 Exploit Protection")
-        ip6tables_add("OUTPUT",  "DROP", ["-m", "rt", "--rt-type", "0"], "RH0 Exploit Protection")
 
-        # protect against spoofing attacks
-        # -------------------------------------------------------------------------------------------------------------
+        # allow localhost to bypass further checks for performance reasons
+        iptables_add( "PREROUTING", "ACCEPT", ["-t", "raw", "-i", "lo"])
+        ip6tables_add("PREROUTING", "ACCEPT", ["-t", "raw", "-i", "lo"])
+        iptables_add( "PREROUTING", "ACCEPT", ["-t", "raw", "-i", "internal0"])
+        ip6tables_add("PREROUTING", "ACCEPT", ["-t", "raw", "-i", "internal0"])
+
+        # filter all packets that have RH0 headers (deprecated, can be used for DoS attacks)
+        ip6tables_add("PREROUTING",  "DROP", ["-t", "raw",    "-m", "rt", "--rt-type", "0"], "RH0 Exploit Protection")
+        ip6tables_add("POSTROUTING", "DROP", ["-t", "mangle", "-m", "rt", "--rt-type", "0"], "RH0 Exploit Protection")
 
         # prevent attacker from using the loopback address as source address
-        iptables_add( "INPUT",   "DROP", ["!", "-i", "lo", "-s", "127.0.0.0/8"], "Anti-Spoofing")
-        iptables_add( "FORWARD", "DROP", ["!", "-i", "lo", "-s", "127.0.0.0/8"], "Anti-Spoofing")
-        ip6tables_add("INPUT",   "DROP", ["!", "-i", "lo", "-s", "::1/128"],     "Anti-Spoofing")
-        ip6tables_add("FORWARD", "DROP", ["!", "-i", "lo", "-s", "::1/128"],     "Anti-Spoofing")
+        iptables_add( "PREROUTING", "DROP", ["-t", "raw", "!", "-i", "lo", "-s", "127.0.0.0/8"], "Anti-Spoofing")
+        ip6tables_add("PREROUTING", "DROP", ["-t", "raw", "!", "-i", "lo", "-s", "::1/128"],     "Anti-Spoofing")
+
+        # block TCP packets with bogus flags
+        iptables_add( "PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "ACK,FIN", "FIN"])
+        iptables_add( "PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "ACK,PSH", "PSH"])
+        iptables_add( "PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "ACK,URG", "URG"])
+        iptables_add( "PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "FIN,RST", "FIN,RST"])
+        iptables_add( "PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "SYN,FIN", "SYN,FIN"])
+        iptables_add( "PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN,RST"])
+        iptables_add( "PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "ALL",     "ALL"])
+        iptables_add( "PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "ALL",     "NONE"])
+        iptables_add( "PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "ALL",     "FIN,PSH,URG"])
+        iptables_add( "PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "ALL",     "SYN,FIN,PSH,URG"])
+        iptables_add( "PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "ALL",     "SYN,RST,ACK,FIN,URG"])
+        ip6tables_add("PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "ACK,FIN", "FIN"])
+        ip6tables_add("PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "ACK,PSH", "PSH"])
+        ip6tables_add("PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "ACK,URG", "URG"])
+        ip6tables_add("PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "FIN,RST", "FIN,RST"])
+        ip6tables_add("PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "SYN,FIN", "SYN,FIN"])
+        ip6tables_add("PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN,RST"])
+        ip6tables_add("PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "ALL",     "ALL"])
+        ip6tables_add("PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "ALL",     "NONE"])
+        ip6tables_add("PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "ALL",     "FIN,PSH,URG"])
+        ip6tables_add("PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "ALL",     "SYN,FIN,PSH,URG"])
+        ip6tables_add("PREROUTING", "DROP", ["-t", "raw", "-p", "tcp", "--tcp-flags", "ALL",     "SYN,RST,ACK,FIN,URG"])
 
         # prevent attacker from using a VPN client address as source address
-        iptables_add( "INPUT",   "DROP", ["-s", str(self.__client_subnet_ipv4), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
-        iptables_add( "FORWARD", "DROP", ["-s", str(self.__client_subnet_ipv4), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
-        ip6tables_add("INPUT",   "DROP", ["-s", str(self.__client_subnet_ipv6), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
-        ip6tables_add("FORWARD", "DROP", ["-s", str(self.__client_subnet_ipv6), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
+        iptables_add( "PREROUTING", "DROP", ["-t", "raw", "-s", str(self.__client_subnet_ipv4), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
+        ip6tables_add("PREROUTING", "DROP", ["-t", "raw", "-s", str(self.__client_subnet_ipv6), "-m", "policy", "--dir", "in", "--pol", "none"], "Anti-Spoofing")
+
+        # block all packets that have an invalid connection state
+        # (mitigates all TCP flood attacks, except SYN floods)
+        # -------------------------------------------------------------------------------------------------------------
+        iptables_add( "PREROUTING", "DROP", ["-t", "mangle", "-m", "conntrack", "--ctstate", "INVALID"])
+        ip6tables_add("PREROUTING", "DROP", ["-t", "mangle", "-m", "conntrack", "--ctstate", "INVALID"])
+
+        # block all packets that are new, but not SYN packets
+        # -------------------------------------------------------------------------------------------------------------
+        iptables_add( "PREROUTING", "DROP", ["-t", "mangle", "-p", "tcp", "!", "--syn", "-m", "conntrack", "--ctstate", "NEW"])
+        ip6tables_add("PREROUTING", "DROP", ["-t", "mangle", "-p", "tcp", "!", "--syn", "-m", "conntrack", "--ctstate", "NEW"])
 
         # allow localhost to access everything
         # -------------------------------------------------------------------------------------------------------------
         iptables_add( "INPUT", "ACCEPT", ["-i", "lo"])
         ip6tables_add("INPUT", "ACCEPT", ["-i", "lo"])
+        iptables_add( "INPUT", "ACCEPT", ["-i", "internal0"])
+        ip6tables_add("INPUT", "ACCEPT", ["-i", "internal0"])
 
         # allow IPSec related traffic
         # -------------------------------------------------------------------------------------------------------------
@@ -852,13 +896,9 @@ class VpnCommandProcessor(CommandProcessor):
 
         # allow packets that belong to already existing connections
         # -------------------------------------------------------------------------------------------------------------
-        iptables_add( "INPUT",   "DROP",   ["-m", "conntrack", "--ctstate", "INVALID"])
         iptables_add( "INPUT",   "ACCEPT", ["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED"])
-        iptables_add( "FORWARD", "DROP",   ["-m", "conntrack", "--ctstate", "INVALID"])
         iptables_add( "FORWARD", "ACCEPT", ["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED"])
-        ip6tables_add("INPUT",   "DROP",   ["-m", "conntrack", "--ctstate", "INVALID"])
         ip6tables_add("INPUT",   "ACCEPT", ["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED"])
-        ip6tables_add("FORWARD", "DROP",   ["-m", "conntrack", "--ctstate", "INVALID"])
         ip6tables_add("FORWARD", "ACCEPT", ["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED"])
 
         # allow VPN clients to access the DNS server
@@ -1338,7 +1378,7 @@ class VpnCommandProcessor(CommandProcessor):
             if index + 1 < len(field_names): line += "+"
             else:                            line += "|"
         print(line)
-        
+
         # print the records
         for record in field_values:
             line = "|"
@@ -1428,7 +1468,7 @@ class VpnCommandProcessor(CommandProcessor):
             line = record[0]
             for field_value in record[1:]:
                 line += "\t" + field_value
-            print(line)                
+            print(line)
 
 
     # -------------------------------------------------------------------------------------------------------------------------------------
@@ -1462,7 +1502,7 @@ class VpnCommandProcessor(CommandProcessor):
         if not out_format:
             if sys.stdin.isatty(): out_format = "text"   # terminal mode
             else:                  out_format = "tsv"    # script mode
-         
+
         if not out_format.lower() in [ "text", "tsv" ]:
             raise CommandLineArgumentError("Output format ({0}) is not supported.", out_format)
 

@@ -13,7 +13,7 @@ RUN \
     bind9 \
     libcurl3 libgmp10 libssl1.0.0 \
     $DEV_PACKAGES && \
-
+  \
   # download and build strongswan source code
   mkdir /strongswan-build && \
   cd /strongswan-build && \
@@ -23,7 +23,7 @@ RUN \
   ./configure --prefix=/usr --sysconfdir=/etc --enable-af-alg --enable-curl --enable-eap-dynamic --enable-eap-identity --enable-eap-tls --enable-files --enable-openssl && \
   make all && make install && \
   cd / && rm -R /strongswan-build && \
-
+  \
   # clean up
   apt-get -y remove $DEV_PACKAGES && \
   apt-get -y autoremove && \
@@ -36,8 +36,7 @@ COPY target /
 
 # Adjust permissions of copied files
 # -----------------------------------------------------------------------------
-RUN \
-  chmod 750 /etc/strongswan-updown.sh
+RUN chmod 750 /etc/strongswan-updown.sh
 
 # Volumes
 # -----------------------------------------------------------------------------
@@ -48,4 +47,5 @@ VOLUME [ "/data" ]
 # 500/udp  - Internet Key Exchange (IKE)
 # 4500/udp - NAT Traversal
 # -----------------------------------------------------------------------------
-EXPOSE 500 4500 
+EXPOSE 500 4500
+

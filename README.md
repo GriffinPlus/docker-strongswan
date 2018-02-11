@@ -182,7 +182,7 @@ Default Value: `8.8.8.8, 8.8.4.4, 2001:4860:4860::8888, 2001:4860:4860::8844` (G
 
 #### ESP_PROPOSALS
 
-Determines the algorithms to propose for ESP. The proposal is directly passed to strongswan in the [esp](https://wiki.strongswan.org/projects/strongswan/wiki/ConnSection) setting.
+Determines the algorithms to propose for ESP. The proposal is directly passed to strongswan in the [esp](https://wiki.strongswan.org/projects/strongswan/wiki/ConnSection) setting. The default selection of proposed algorithms should be secure and cover most clients at the same time. It does not contain algorithms that are known to be broken, only reliable ones.
 
 A list of algorithms can be found [here](https://wiki.strongswan.org/projects/strongswan/wiki/IKEv2CipherSuites).
 
@@ -190,7 +190,7 @@ Default Value: `aes128gcm8-aes128gcm12-aes128gcm16-aes256gcm8-aes256gcm12-aes256
 
 #### IKE_PROPOSALS
 
-Determines the algorithms to propose for IKE. The proposal is passed to strongswan in the [ike](https://wiki.strongswan.org/projects/strongswan/wiki/ConnSection) setting.
+Determines the algorithms to propose for IKE. The proposal is passed to strongswan in the [ike](https://wiki.strongswan.org/projects/strongswan/wiki/ConnSection) setting. The default selection of proposed algorithms should be secure and cover most clients at the same time. It does not contain algorithms that are known to be broken, only reliable ones.
 
 A list of algorithms can be found [here](https://wiki.strongswan.org/projects/strongswan/wiki/IKEv2CipherSuites).
 
@@ -357,7 +357,7 @@ The *strongswan* container will take your external CA into account, if you provi
 
 ### Windows 10 (Desktop, Integrated VPN Client)
 
-By default, the *Windows 10 Integrated VPN Client* only offers a rather insecure set of algorithms. Other sites have illustrated this issue extensively, so here is the extract of the discussion only. The algorithms proposed by Windows 10 will not work with the algorithms proposed by shipped version of *strongswan* out-of-the-box. Older versions of *strongswan* and Windows 10 agreed on using `3DES_CBC/HMAC_SHA1_96/PRF_HMAC_SHA1/MODP_1024`, but neither *3DES_CBC* for encryption nor a 1024 bit Diffie-Hellman group is a secure choice nowadays. That is why newer releases of *strongswan* disable these algorithms breaking compatibility with the Windows 10 VPN client. Windows 10 can be configured to use more secure algorithms (AES_256_CBC for encryption and a 2048 bit Diffie-Hellman group) by adding the following registry snippet:
+By default, the *Windows 10 Integrated VPN Client* only offers a rather insecure set of algorithms. Other sites have illustrated this issue extensively, so here is the extract of the discussion only. The algorithms proposed by Windows 10 will not work with the algorithms proposed by the *strongswan* container out-of-the-box. By default Windows 10 proposes to use `3DES_CBC/HMAC_SHA1_96/PRF_HMAC_SHA1/MODP_1024`, but neither *3DES_CBC* for encryption nor a 1024 bit Diffie-Hellman group is a secure choice nowadays. Windows 10 can be configured to use more secure algorithms (AES_256_CBC for encryption and a 2048 bit Diffie-Hellman group) by adding the following registry snippet:
 
 ```
 Windows Registry Editor Version 5.00
@@ -372,11 +372,26 @@ Windows Registry Editor Version 5.00
 | 1	    | Enable AES-256-CBC and MODP-2048
 | 2	    | Enforce the usage of AES-256-CBC and MODP-2048
 
-With this tiny modification, Windows 10 and *strongswan* will play together securely. Before you can set up a VPN connection, you need to import the client's private key and the client certificate into the **user's certificate store** and the certificate of the internal CA into the **machine certificate store**. The key and the certificates are contained in the PKCS12 archive that is created when adding a VPN client (see above). Sad to say that you have to import the PKCS12 archive twice to get the certificates in place (if somebody knows, why this is necessary and how one can circumvent this issue, please let me know!). The VPN connection can now be set up manually (IKEv2, Authentication with EAP-TLS using certificates). Alternatively the following PowerShell script can be used as well (please adjust `-ServerAddress` to fit your setup):
+With this tiny modification, Windows 10 and the *strongswan* container will play together securely. Before you can set up a VPN connection, you need to import the client's private key and the client certificate into the **user's certificate store** and the certificate of the internal CA into the **machine certificate store**. The key and the certificates are contained in the PKCS12 archive that is created when adding a VPN client (see above). Sad to say that you have to import the PKCS12 archive twice to get the certificates in place (if somebody knows, why this is necessary and how one can circumvent this issue, please let me know!). The VPN connection can now be set up manually (IKEv2, Authentication with EAP-TLS using certificates). Alternatively the following PowerShell script can be used as well (please adjust `-ServerAddress` to fit your setup):
 
 ```
 PS C:\> $tlsauth = New-EapConfiguration -tls -VerifyServerIdentity -UserCertificate
 PS C:\> Add-VpnConnection -Name "My-VPN-Connection" -ServerAddress "vpn.my-domain.com" -TunnelType "IKEv2" -EncryptionLevel "Required" -AuthenticationMethod Eap -EapConfigXmlStream $tlsauth.EapConfigXmlStream -PassThru
+```
+
+At this point you should be able to connect to the *strongswan* container with default settings. You can dig a bit deeper and select more secure or faster ciphers, if you want. I recommend using AES-128-GCM. It is both a secure and fast choice, since AES in Galois/Counter Mode (GCM) is an *Authenticated Encryption with Associated Data (AEAD)* algorithm that ensures both confidentiality and authenticity at the same time eliminating the need for a separate integrity algorithm. The following Powershell snippet will set it up. Don't get confused by the `-IntegrityCheckMethod` parameter, it is required for the cmdlet, but ignored in GCM mode. The snippet will furthermore configure the Diffie Hellman Group used for IKE key exchanges (`-DHGroup`) and the *Perfect Forward Secrecy (PFS)* Group (`-PfsGroup`) in the IPSec policy. Details concerning the `Set-VpnConnectionIPSecConfiguration` function can be found [here](https://technet.microsoft.com/de-de/library/dn262642(v=wps.630).aspx):
+
+```
+PS C:\> Set-VpnConnectionIPsecConfiguration \
+           -ConnectionName "My-VPN-Connection" \
+           -AuthenticationTransformConstants GCMAES128 \
+           -CipherTransformConstants GCMAES128 \
+           -EncryptionMethod GCMAES128 \
+           -IntegrityCheckMethod SHA384 \
+           -PfsGroup ECP384 \
+           -DHGroup ECP384 \
+           -PassThru \
+           -Force
 ```
 
 ### Android StrongSwan App

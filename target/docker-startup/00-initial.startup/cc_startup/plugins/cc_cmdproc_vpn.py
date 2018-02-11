@@ -675,26 +675,26 @@ class VpnCommandProcessor(CommandProcessor):
         # IKE - Proposal 1: AEAD (encryption + integrity combined) + PRF + DH Group (for Perfect Forward Secrecy)
         # - encryption/integrity: aes[128|256][ccm|gcm][8|12|16]
         # - PRF: prfmd5, prfsha1, prfaesxcbc, prfaescmac, prfsha[256|384|512]
-        # - DH Groups: Regular Groups: modp[1536|2048|3072|4096|6144|8192]
+        # - DH Groups: Regular Groups: modp[2048|3072|4096|6144|8192]
         #              NIST Elliptic Curve Groups: ecp[192|224|256|384|521]
         #              Brainpool Curve Groups: ecp[224|256|384|512]bp
         #              Elliptic Curve 25519
         default_ike_proposals  = "aes128gcm8-aes128gcm12-aes128gcm16-aes256gcm8-aes256gcm12-aes256gcm16-aes128ccm8-aes128ccm12-aes128ccm16-aes256ccm8-aes256ccm12-aes256ccm16-"
         default_ike_proposals += "prfmd5-prfsha1-prfaesxcbc-prfaescmac-prfsha256-prfsha384-prfsha512-"
-        default_ike_proposals += "modp1536-modp2048-modp3072-modp4096-modp6144-modp8192-ecp192-ecp224-ecp256-ecp384-ecp521-ecp224bp-ecp256bp-ecp384bp-ecp512bp-curve25519,"
+        default_ike_proposals += "modp2048-modp3072-modp4096-modp6144-modp8192-ecp192-ecp224-ecp256-ecp384-ecp521-ecp224bp-ecp256bp-ecp384bp-ecp512bp-curve25519,"
 
         # IKE - Proposal 2: Encryption + Integrity + PRF + DH Group (for Perfect Forward Secrecy)
         # - Encryption: aes[128|256]
         # - Integrity: md5, sha1, aesxcbc, aescmac, sha[256|384|512]
         # - PRF: prfmd5, prfsha1, prfaesxcbc, prfaescmac, prfsha[256|384|512]
-        # - DH Groups: Regular Groups: modp[1536|2048|3072|4096|6144|8192]
+        # - DH Groups: Regular Groups: modp[2048|3072|4096|6144|8192]
         #              NIST Elliptic Curve Groups: ecp[192|224|256|384|521]
         #              Brainpool Curve Groups: ecp[224|256|384|512]bp
         #              Elliptic Curve 25519
         default_ike_proposals += "aes128-aes256-"
         default_ike_proposals += "md5-sha1-aesxcbc-aescmac-sha256-sha384-sha512-"
         default_ike_proposals += "prfmd5-prfsha1-prfaesxcbc-prfaescmac-prfsha256-prfsha384-prfsha512-"
-        default_ike_proposals += "modp1536-modp2048-modp3072-modp4096-modp6144-modp8192-ecp192-ecp224-ecp256-ecp384-ecp521-ecp224bp-ecp256bp-ecp384bp-ecp512bp-curve25519"
+        default_ike_proposals += "modp2048-modp3072-modp4096-modp6144-modp8192-ecp192-ecp224-ecp256-ecp384-ecp521-ecp224bp-ecp256bp-ecp384bp-ecp512bp-curve25519"
 
         # get IKE proposals from environment
         self.__ike_proposals = get_env_setting_string("IKE_PROPOSALS", default_ike_proposals)
@@ -704,13 +704,23 @@ class VpnCommandProcessor(CommandProcessor):
 
         # ESP - Proposal 1: AEAD (encryption + integrity combined)
         # - encryption/integrity: aes[128|256][ccm|gcm][8|12|16]
-        default_esp_proposals  = "aes128gcm8-aes128gcm12-aes128gcm16-aes256gcm8-aes256gcm12-aes256gcm16-aes128ccm8-aes128ccm12-aes128ccm16-aes256ccm8-aes256ccm12-aes256ccm16,"
+        # - DH Groups: Regular Groups: modp[2048|3072|4096|6144|8192]
+        #              NIST Elliptic Curve Groups: ecp[192|224|256|384|521]
+        #              Brainpool Curve Groups: ecp[224|256|384|512]bp
+        #              Elliptic Curve 25519
+        default_esp_proposals  = "aes128gcm8-aes128gcm12-aes128gcm16-aes256gcm8-aes256gcm12-aes256gcm16-aes128ccm8-aes128ccm12-aes128ccm16-aes256ccm8-aes256ccm12-aes256ccm16-"
+        default_esp_proposals += "modp2048-modp3072-modp4096-modp6144-modp8192-ecp192-ecp224-ecp256-ecp384-ecp521-ecp224bp-ecp256bp-ecp384bp-ecp512bp-curve25519,"
 
         # ESP - Proposal 2: Encryption + Integrity
         # - Encryption: aes[128|256]
         # - Integrity: md5, md5_128, sha1, sha1_160, aesxcbc, aescmac, sha[256|384|512]
+        # - DH Groups: Regular Groups: modp[2048|3072|4096|6144|8192]
+        #              NIST Elliptic Curve Groups: ecp[192|224|256|384|521]
+        #              Brainpool Curve Groups: ecp[224|256|384|512]bp
+        #              Elliptic Curve 25519
         default_esp_proposals += "aes128-aes256-"
-        default_esp_proposals += "md5-md5_128-sha1-sha1_160-aesxcbc-aescmac-sha256-sha384-sha512"
+        default_esp_proposals += "md5-md5_128-sha1-sha1_160-aesxcbc-aescmac-sha256-sha384-sha512-"
+        default_esp_proposals += "modp2048-modp3072-modp4096-modp6144-modp8192-ecp192-ecp224-ecp256-ecp384-ecp521-ecp224bp-ecp256bp-ecp384bp-ecp512bp-curve25519"
 
         # get ESP proposals from environment
         self.__esp_proposals = get_env_setting_string("ESP_PROPOSALS", default_esp_proposals)

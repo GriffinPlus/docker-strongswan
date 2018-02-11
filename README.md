@@ -186,7 +186,7 @@ Determines the algorithms to propose for ESP. The proposal is directly passed to
 
 A list of algorithms can be found [here](https://wiki.strongswan.org/projects/strongswan/wiki/IKEv2CipherSuites).
 
-Default Value: `aes128gcm8-aes128gcm12-aes128gcm16-aes256gcm8-aes256gcm12-aes256gcm16-aes128ccm8-aes128ccm12-aes128ccm16-aes256ccm8-aes256ccm12-aes256ccm16,aes128-aes256-md5-md5_128-sha1-sha1_160-aesxcbc-aescmac-sha256-sha384-sha512`
+Default Value: `aes128gcm8-aes128gcm12-aes128gcm16-aes256gcm8-aes256gcm12-aes256gcm16-aes128ccm8-aes128ccm12-aes128ccm16-aes256ccm8-aes256ccm12-aes256ccm16,aes128-aes256-md5-md5_128-sha1-sha1_160-aesxcbc-aescmac-sha256-sha384-sha512-modp2048-modp3072-modp4096-modp6144-modp8192-ecp192-ecp224-ecp256-ecp384-ecp521-ecp224bp-ecp256bp-ecp384bp-ecp512bp-curve25519`
 
 #### IKE_PROPOSALS
 
@@ -194,7 +194,7 @@ Determines the algorithms to propose for IKE. The proposal is passed to strongsw
 
 A list of algorithms can be found [here](https://wiki.strongswan.org/projects/strongswan/wiki/IKEv2CipherSuites).
 
-Default Value: `aes128gcm8-aes128gcm12-aes128gcm16-aes256gcm8-aes256gcm12-aes256gcm16-aes128ccm8-aes128ccm12-aes128ccm16-aes256ccm8-aes256ccm12-aes256ccm16-prfmd5-prfsha1-prfaesxcbc-prfaescmac-prfsha256-prfsha384-prfsha512-modp1536-modp2048-modp3072-modp4096-modp6144-modp8192-ecp192-ecp224-ecp256-ecp384-ecp521-ecp224bp-ecp256bp-ecp384bp-ecp512bp-curve25519,aes128-aes256-md5-sha1-aesxcbc-aescmac-sha256-sha384-sha512-prfmd5-prfsha1-prfaesxcbc-prfaescmac-prfsha256-prfsha384-prfsha512-modp1536-modp2048-modp3072-modp4096-modp6144-modp8192-ecp192-ecp224-ecp256-ecp384-ecp521-ecp224bp-ecp256bp-ecp384bp-ecp512bp-curve25519`
+Default Value: `aes128gcm8-aes128gcm12-aes128gcm16-aes256gcm8-aes256gcm12-aes256gcm16-aes128ccm8-aes128ccm12-aes128ccm16-aes256ccm8-aes256ccm12-aes256ccm16-prfmd5-prfsha1-prfaesxcbc-prfaescmac-prfsha256-prfsha384-prfsha512-modp2048-modp3072-modp4096-modp6144-modp8192-ecp192-ecp224-ecp256-ecp384-ecp521-ecp224bp-ecp256bp-ecp384bp-ecp512bp-curve25519,aes128-aes256-md5-sha1-aesxcbc-aescmac-sha256-sha384-sha512-prfmd5-prfsha1-prfaesxcbc-prfaescmac-prfsha256-prfsha384-prfsha512-modp2048-modp3072-modp4096-modp6144-modp8192-ecp192-ecp224-ecp256-ecp384-ecp521-ecp224bp-ecp256bp-ecp384bp-ecp512bp-curve25519`
 
 #### PROTECT_CLIENTS_FROM_INTERNET
 

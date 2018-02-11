@@ -5,6 +5,8 @@ config setup
 
 conn %default
     keyexchange = ikev2
+    ike = ${ike_proposals}!
+    esp = ${esp_proposals}!
     dpdaction = clear
     dpddelay = 300s
     authby = pubkey

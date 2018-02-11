@@ -20,7 +20,7 @@ RUN \
   wget https://download.strongswan.org/strongswan-$STRONGSWAN_VERSION.tar.bz2 && \
   tar -xjf strongswan-$STRONGSWAN_VERSION.tar.bz2 && \
   cd strongswan-$STRONGSWAN_VERSION && \
-  ./configure --prefix=/usr --sysconfdir=/etc --enable-af-alg --enable-curl --enable-eap-dynamic --enable-eap-identity --enable-eap-tls --enable-files --enable-openssl && \
+  ./configure --prefix=/usr --sysconfdir=/etc --enable-aesni --enable-af-alg --enable-ccm --enable-curl --enable-eap-dynamic --enable-eap-identity --enable-eap-tls --enable-files --enable-gcm --enable-openssl && \
   make all && make install && \
   cd / && rm -R /strongswan-build && \
   \

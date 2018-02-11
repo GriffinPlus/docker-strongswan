@@ -28,7 +28,7 @@ The image provides the following features:
 - Internal DNS forwarder provides name resolution services to VPN clients using...
   - Docker's embedded DNS (containers can be accessed by their name)
   - External DNS servers
-- High performance by using NETKEY (kernel-mode IPSec) and the OpenSSL / Linux Kernel Crypto API
+- High performance by using the kernel's NETKEY IPSec stack (kernel 2.6+)
 - Communication between VPN clients
 - Internet access over the VPN
   - IPv4: Masquerading

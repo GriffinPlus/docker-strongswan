@@ -4,14 +4,15 @@ Author: Sascha Falk <sascha@falk-online.eu>
 License: MIT License
 """
 
+import configparser
 import os
 import sys
 
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives.serialization import Encoding
+from cryptography.hazmat.primitives.asymmetric import rsa, ec
+from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
 from cryptography.x509.oid import NameOID
 from datetime import datetime, timedelta
 from glob import iglob
@@ -23,7 +24,7 @@ from ..cc_helpers import is_email_address
 
 
 # -------------------------------------------------------------------------------------------------------------------------------------------------------------
-# Definitions 
+# Definitions
 # -------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
@@ -31,7 +32,7 @@ CA_BASE_DIR = "/data/internal_ca"
 
 
 # -------------------------------------------------------------------------------------------------------------------------------------------------------------
-# Exception Classes 
+# Exception Classes
 # -------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
@@ -132,6 +133,93 @@ class NotFoundError(Error):
         self.message = message.format(*args)
 
 
+# -------------------------------------------------------------------------------------------------------------------------------------------------------------
+# The KeyType/KeyTypes Class
+# -------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+class KeyType:
+
+    def __init__(self, name, description, factory):
+        """
+        Initializes the instance of the KeyType class.
+
+        Args:
+            name (str)        : Short name of the key type.
+            description (str) : A more elaborate description of the key type.
+            factory (func)    : A factory function creating a new key of the type.
+        """
+
+        self.__name = name
+        self.__description = description
+        self.__factory = factory
+
+    @property
+    def name(self):
+        """
+        Gets the name of the key type.
+
+        """
+        return self.__name
+
+    @property
+    def description(self):
+        """
+        Gets the description of the key type.
+
+        """
+        return self.__description
+
+    @property
+    def factory(self):
+        """
+        Gets the factory function creating a new key of the type.
+
+        """
+        return self.__factory
+
+    def create_key(self):
+        """
+        Creates a key of the current type.
+
+        """
+        key = self.factory()
+        key_pem = key.private_bytes(encoding = Encoding.PEM, format = PrivateFormat.TraditionalOpenSSL, encryption_algorithm = NoEncryption())
+        return crypto.load_privatekey(crypto.FILETYPE_PEM, key_pem)
+
+
+class KeyTypes:
+
+    rsa2048   = KeyType("rsa2048", "RSA, 2048 bit",                                                             lambda: rsa.generate_private_key(65537, 2048, default_backend()))
+    rsa3072   = KeyType("rsa3072", "RSA, 3072 bit",                                                             lambda: rsa.generate_private_key(65537, 3072, default_backend()))
+    rsa4096   = KeyType("rsa4096", "RSA, 4096 bit",                                                             lambda: rsa.generate_private_key(65537, 4096, default_backend()))
+    secp192r1 = KeyType("secp192r1", "ECC, SECG curve over a 192 bit prime field (aka P-192, prime192v1)",      lambda: ec.generate_private_key(ec.SECP192R1, default_backend()))
+    secp224r1 = KeyType("secp224r1", "ECC, NIST/SECG curve over a 224 bit prime field",                         lambda: ec.generate_private_key(ec.SECP224R1, default_backend()))
+    secp256k1 = KeyType("secp256k1", "ECC, SECG curve over a 256 bit prime field",                              lambda: ec.generate_private_key(ec.SECP256K1, default_backend()))
+    secp256r1 = KeyType("secp256r1", "ECC, NIST/SECG curve over a 256 bit prime field (aka P-256, prime256v1)", lambda: ec.generate_private_key(ec.SECP256R1, default_backend()))
+    secp384r1 = KeyType("secp384r1", "ECC, NIST/SECG curve over a 384 bit prime field (aka P-384)",             lambda: ec.generate_private_key(ec.SECP384R1, default_backend()))
+    secp521r1 = KeyType("secp521r1", "ECC, NIST/SECG curve over a 521 bit prime field (aka P-521)",             lambda: ec.generate_private_key(ec.SECP521R1, default_backend()))
+
+    @classmethod
+    def get_by_name(cls, name):
+       name = name.lower()
+       for kt in KeyTypes.all():
+           if kt.name == name:
+               return kt
+       return None
+
+    @classmethod
+    def all(cls):
+        yield KeyTypes.rsa2048
+        yield KeyTypes.rsa3072
+        yield KeyTypes.rsa4096
+        yield KeyTypes.secp192r1
+        yield KeyTypes.secp224r1
+        yield KeyTypes.secp256k1
+        yield KeyTypes.secp256r1
+        yield KeyTypes.secp384r1
+        yield KeyTypes.secp521r1
+
 
 # -------------------------------------------------------------------------------------------------------------------------------------------------------------
 # The CertificateAuthority Class
@@ -154,6 +242,7 @@ class CertificateAuthority:
         self.__ca_key_path              = os.path.join(self.__base_dir, "ca-key.pem")
         self.__ca_cert_path             = os.path.join(self.__base_dir, "ca-cert.pem")
         self.__ca_crl_path              = os.path.join(self.__base_dir, "ca-crl.pem")
+        self.__ca_config_path           = os.path.join(self.__base_dir, "ca-config.ini")
         self.__ca_next_cert_serial_path = os.path.join(self.__base_dir, "next-cert-serial.cnt")
         self.__storage_dir              = os.path.join(self.__base_dir, "storage")
         self.__ca_password              = None
@@ -163,7 +252,22 @@ class CertificateAuthority:
             self.__ca_key_path,
             self.__ca_cert_path,
             self.__ca_crl_path,
+            self.__ca_config_path,
         ]
+
+
+    # -------------------------------------------------------------------------------------------------------------------------------------
+
+
+    @property
+    def config(self):
+        """
+        Gets the configuration of the CA (configparser obj).
+
+        """
+        config = configparser.ConfigParser()
+        config.read(self.__ca_config_path)
+        return config
 
 
     # -------------------------------------------------------------------------------------------------------------------------------------
@@ -328,7 +432,7 @@ class CertificateAuthority:
 
         Exceptions:
             NotInitializedError : The CA environment is not initialized.
-        
+
         """
 
         # ensure that the CA environment is initialized
@@ -355,12 +459,15 @@ class CertificateAuthority:
     # -------------------------------------------------------------------------------------------------------------------------------------
 
 
-    def init(self, password):
+    def init(self, password, ca_key_type, server_key_type, client_key_type):
         """
         Initialized the CA environment generating related data (private key, certificate and filesystem structure).
 
         Args:
-            password (str) : Password to protect CA related data with (None, if you don't want to use any protection)
+            password (str)        : Password to protect CA related data with (None, if you don't want to use any protection)
+            ca_key_type (str)     : Type of the private key to create for the CA. See class 'KeyType' for supported key types.
+            server_key_type (str) : Type of the private key to create for the server lateron. See class 'KeyType' for supported key types.
+            client_key_type (str) : Type of the private key to use for clients created lateron. See class 'KeyType' for supported key types.
 
         Exceptions:
             AlreadyInitializedError : The CA is already initialized (associated files are already present).
@@ -383,10 +490,18 @@ class CertificateAuthority:
             password = password.strip()
             if len(password) == 0: password = None
 
+        # ensure that the specified key types are valid
+        # ---------------------------------------------------------------------
+        if not ca_key_type.lower() in [kt.name for kt in KeyTypes.all()]:
+            raise ArgumentError("Invalid key type ({0})".format(ca_key_type))
+        if not server_key_type.lower() in [kt.name for kt in KeyTypes.all()]:
+            raise ArgumentError("Invalid key type ({0})".format(server_key_type))
+        if not client_key_type.lower() in [kt.name for kt in KeyTypes.all()]:
+            raise ArgumentError("Invalid key type ({0})".format(client_key_type))
+
         # create the CA's private key
         # ---------------------------------------------------------------------
-        ca_key = crypto.PKey()
-        ca_key.generate_key(crypto.TYPE_RSA, 4096)
+        ca_key = KeyTypes.get_by_name(ca_key_type).create_key()
 
         # create the CA's certificate
         # ---------------------------------------------------------------------
@@ -426,7 +541,7 @@ class CertificateAuthority:
             .add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ski), False) \
             .sign(private_key = ca_key.to_cryptography_key(), algorithm=hashes.SHA256(), backend=default_backend())
 
-        # write key, certificate and the CRL to disk
+        # write everything to disk
         # ---------------------------------------------------------------------
         try:
 
@@ -449,12 +564,24 @@ class CertificateAuthority:
             os.chown(self.__ca_cert_path, 0, 0)
             os.chmod(self.__ca_cert_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
 
+            # desired server/client key type
+            config = configparser.ConfigParser()
+            config["server"] = {}
+            config["server"]["default-key-type"] = server_key_type.lower()
+            config["client"] = {}
+            config["client"]["default-key-type"] = client_key_type.lower()
+            with open(self.__ca_config_path, "w") as configfile:
+                config.write(configfile)
+            os.chown(self.__ca_config_path, 0, 0)
+            os.chmod(self.__ca_config_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
+
         except:
 
             # writing CA environment failed => delete generated files
             if os.path.exists(self.__ca_key_path): os.remove(self.__ca_key_path)
             if os.path.exists(self.__ca_cert_path): os.remove(self.__ca_cert_path)
             if os.path.exists(self.__ca_crl_path): os.remove(self.__ca_crl_path)
+            if os.path.exists(self.__ca_config_path): os.remove(self.__ca_config_path)
             raise
 
         self.__ca_password = password
@@ -532,7 +659,7 @@ class CertificateAuthority:
     # -------------------------------------------------------------------------------------------------------------------------------------
 
 
-    REVOKE_REASON_MAP = {
+    __revoke_reason_map = {
         "unspecified"            : x509.ReasonFlags.unspecified,
         "key_compromise"         : x509.ReasonFlags.key_compromise,
         "ca_compromise"          : x509.ReasonFlags.ca_compromise,
@@ -568,7 +695,7 @@ class CertificateAuthority:
         """
 
         serial_number = int(serial_number)
-        revoke_reason = CertificateAuthority.REVOKE_REASON_MAP[reason]
+        revoke_reason = CertificateAuthority.__revoke_reason_map[reason]
 
         # get the certificate with the specified serial number
         cert = self.get_certificate(serial_number, raiseIfNotExist = True)
@@ -675,13 +802,20 @@ class CertificateAuthority:
             - The serial number of the certificate (int)
             - The client's private key (OpenSSL PKey object)
             - The client's certificate key (OpenSSL X509 object)
-            
+
         """
 
         # load the CA's private key and certificate
         # -----------------------------------------------------------------------------------------
         ca_key = self.key
         ca_cert = self.cert
+
+        # retrieve key type to use
+        # -----------------------------------------------------------------------------------------
+        key_type_name = self.config["client"]["default-key-type"]
+        key_type = KeyTypes.get_by_name(key_type_name)
+        if key_type == None:
+            raise RuntimeError("The configured key type ({0}) is not supported.".format(key_type_name))
 
         # ensure the the identity is an e-mail address
         # -----------------------------------------------------------------------------------------
@@ -694,8 +828,7 @@ class CertificateAuthority:
 
         # create the client key
         # ---------------------------------------------------------------------
-        client_key = crypto.PKey()
-        client_key.generate_key(crypto.TYPE_RSA, 4096)
+        client_key = key_type.create_key()
 
         # create the client certificate
         # ---------------------------------------------------------------------
@@ -777,7 +910,7 @@ class CertificateAuthority:
             otherwise False
 
         """
-        
+
         if not isinstance(cert, crypto.X509):
             raise RuntimeError("The specified argument is not an OpenSSL X509 object.")
 
@@ -854,7 +987,7 @@ class CertificateAuthority:
 
         return client_certs
 
-             
+ 
     # -------------------------------------------------------------------------------------------------------------------------------------
 
 
@@ -880,6 +1013,13 @@ class CertificateAuthority:
         ca_key = self.key
         ca_cert = self.cert
 
+        # retrieve key type to use
+        # -----------------------------------------------------------------------------------------
+        key_type_name = self.config["server"]["default-key-type"]
+        key_type = KeyTypes.get_by_name(key_type_name)
+        if key_type == None:
+            raise RuntimeError("The configured key type ({0}) is not supported.".format(key_type_name))
+
         # create directory where the key/certificate is stored, if necessary
         # ---------------------------------------------------------------------
         os.makedirs(self.__storage_dir, exist_ok = True)
@@ -887,8 +1027,7 @@ class CertificateAuthority:
         # create the private key of the server
         # ---------------------------------------------------------------------
         if server_key == None:
-            server_key = crypto.PKey()
-            server_key.generate_key(crypto.TYPE_RSA, 4096)
+            server_key = key_type.create_key()
 
         # create the certificate of the server
         # ---------------------------------------------------------------------
@@ -947,7 +1086,6 @@ class CertificateAuthority:
     # Helper Functions
     # ---------------------------------------------------------------------------------------------------------------------------------------------------------
 
-
     def get_next_serial_number(self):
         """
         Gets the serial number for the next certificate and increments the counter.
@@ -969,6 +1107,8 @@ class CertificateAuthority:
             with open(self.__ca_next_cert_serial_path, "wt+") as f:
                 f.write("{0}".format(next+1))
             return next
+
+
 
 
 # -------------------------------------------------------------------------------------------------------------------------------------------------------------

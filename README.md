@@ -23,8 +23,17 @@ The image provides the following features:
   - IKEv2 EAP-TLS (certificate authentication)
 - Internal Certificate Authority
   - Automatic and Self-Maintaining (no need to handle cryptographic stuff manually)
-  - Creates a self-signed server certificate for StrongSwan
-  - Creates client certificates to authenticate VPN clients
+  - Creates a server certificate for StrongSwan and client certificates to authenticate VPN clients
+  - Supports RSA/ECC certificates
+    - RSA: 2048 bit
+    - RSA: 3072 bit
+    - RSA: 4096 bit
+    - ECC Curve: secp192r1 (ECC, SECG curve over a 192 bit prime field) (aka P-192, prime192v1)
+    - ECC Curve: secp224r1 (ECC, NIST/SECG curve over a 224 bit prime field)
+    - ECC Curve: secp256k1 (ECC, SECG curve over a 256 bit prime field)
+    - ECC Curve: secp256r1 (ECC, NIST/SECG curve over a 256 bit prime field) (aka P-256, prime256v1)
+    - ECC Curve: secp384r1 (ECC, NIST/SECG curve over a 384 bit prime field) (aka P-384)
+    - ECC Curve: secp521r1 (ECC, NIST/SECG curve over a 521 bit prime field) (aka P-521)
 - Internal DNS forwarder provides name resolution services to VPN clients using...
   - Docker's embedded DNS (containers can be accessed by their name)
   - External DNS servers
@@ -68,13 +77,33 @@ docker volume create strongswan-data
 
 The *strongswan* container assists with setting up a basic *Public Key Infrastructure (PKI)*. The internal CA maintained by the container itself provides everything needed to generate *server certificates* to authenticate the server, *client certificates* to authenticate clients and a *Certificate Revocation List (CRL)* to disable clients by revoking the corresponding certificates. All RSA keys are 4096 bit. The expiry period of the CA certificate and the generated CRL is 10 years. Such a long expiry period is rather uncommon for CAs, but it ensures that *strongswan* remains working. An expired CRL would otherwise block all connections to the VPN server.
 
+The initialization of the internal CA sets the key/certificate types the CA will use to create its own certificate, server certificates and client certificates. Usually the key of the CA is stronger than the key of the server or client, since the key of a root CA is very long-lived and the most important supporting pillar in a PKI. RSA certificates are a good choice, if you want to guarantee compatability. Almost all clients support RSA, but RSA keys are much bigger 
+than ECC keys providing the same level of security. On the other hand, ECC keys are small and therefore cryptographic operations are much faster compared to RSA. If you know that your clients support ECC, you will get the best performance using ECC keys. As long as quantum computers are not a real threat, a secure and future-proof choice is `rsa4096` or `secp521r1` for the CA and `rsa3072` or `secp384r1` for the server key and client key.
+
+The following key types are supported:
+
+| Key Type  | Description                                         
+| :-------- | :---------------------------------------------------------------------------
+| rsa2048   | RSA, 2048 bit
+| rsa3072   | RSA, 3072 bit
+| rsa4096   | RSA, 4096 bit
+| secp192r1 | ECC, SECG curve over a 192 bit prime field) (aka P-192, prime192v1)
+| secp224r1 | ECC, NIST/SECG curve over a 224 bit prime field)
+| secp256k1 | ECC, SECG curve over a 256 bit prime field)
+| secp256r1 | ECC, NIST/SECG curve over a 256 bit prime field) (aka P-256, prime256v1)
+| secp384r1 | ECC, NIST/SECG curve over a 384 bit prime field) (aka P-384)
+| secp521r1 | ECC, NIST/SECG curve over a 521 bit prime field) (aka P-521)
+
 The internal CA can be set up interactively using the following command. You will be prompted to enter a password to protect the CA's private key.
 
 ```
 docker run -it \
   -v strongswan-data:/data \
   cloudycube/strongswan \
-  init
+  init \
+  --ca-key-type=<key-type> \
+  --server-key-type=<key-type> \
+  --client-key-type=<key-type>
 ```
 
 The internal CA can be initialized using the `--ca-pass` command line parameter or *stdin* to feed in the password as well. Using *stdin* is the recommended way as the password cannot leak via process lists or docker's inspection features:
@@ -172,7 +201,7 @@ proxy eth0 {
 }
 ```
 
-Default: `fd00:DEAD:BEEF:AFFE::/64` (ULA, Site-ID: `DEAD:BEEF`, Subnet-ID: `AFFE`)
+Default: `fd00:dead:beef:affe::/64` (ULA, Site-ID: `dead:beef`, Subnet-ID: `affe`)
 
 #### DNS_SERVERS
 
@@ -377,8 +406,8 @@ Windows Registry Editor Version 5.00
 | Value | Meaning
 | :---: | :----------------------------------------------
 | 0     | Disable AES-256-CBC and MODP-2048 (default)
-| 1	    | Enable AES-256-CBC and MODP-2048
-| 2	    | Enforce the usage of AES-256-CBC and MODP-2048
+| 1     | Enable AES-256-CBC and MODP-2048
+| 2     | Enforce the usage of AES-256-CBC and MODP-2048
 
 With this tiny modification, Windows 10 and the *strongswan* container will play together securely. Before you can set up a VPN connection, you need to import the client's private key and the client certificate into the **user's certificate store** and the certificate of the internal CA into the **machine certificate store**. The key and the certificates are contained in the PKCS12 archive that is created when adding a VPN client (see above). Sad to say that you have to import the PKCS12 archive twice to get the certificates in place (if somebody knows, why this is necessary and how one can circumvent this issue, please let me know!). The VPN connection can now be set up manually (IKEv2, Authentication with EAP-TLS using certificates). Alternatively the following PowerShell script can be used as well (please adjust `-ServerAddress` to fit your setup):
 

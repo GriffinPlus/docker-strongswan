@@ -141,11 +141,16 @@ class VpnCommandProcessor(CommandProcessor):
                                               NamedArgument("ca-pass", from_stdin=True))
 
         self.add_handler(self.init,           PositionalArgument("init"),
-                                              NamedArgument("ca-pass", from_stdin=True))
+                                              NamedArgument("ca-pass", from_stdin=True),
+                                              NamedArgument("ca-key-type", min_occurrence = 1, max_occurrence = 1),
+                                              NamedArgument("server-key-type", min_occurrence = 1, max_occurrence = 1),
+                                              NamedArgument("client-key-type", min_occurrence = 1, max_occurrence = 1))
 
         self.add_handler(self.add_client,     PositionalArgument("add"), PositionalArgument("client"),
-                                              NamedArgument("ca-pass", from_stdin=True), NamedArgument("out-format"),
-                                              NamedArgument("pkcs12-pass", from_stdin=True), NamedArgument("pkcs12-file"))
+                                              NamedArgument("ca-pass", from_stdin=True),
+                                              NamedArgument("out-format"),
+                                              NamedArgument("pkcs12-pass", from_stdin=True),
+                                              NamedArgument("pkcs12-file"))
 
         self.add_handler(self.list_clients,   PositionalArgument("list"), PositionalArgument("clients"),
                                               NamedArgument("out-format"))
@@ -176,7 +181,7 @@ class VpnCommandProcessor(CommandProcessor):
         If the container was run with the flags --interactive and --tty, the handler operates in interactive mode, i.e. the
         user is queried, if some information is missing. The output in this mode is made for humans.
 
-        If the container was run with the flags --interactive, but without --tty, the handler operates in script mode, i.e.
+        If the container was run with the flag --interactive, but without --tty, the handler operates in script mode, i.e.
         any data needed for the operation must be specified using command line parameters or piped in via stdin. Input to
         stdin is expected to contain one line: the password of the CA. Although using stdin is a bit more lengthy, it minimizes
         the chance of leaking credentials as passwords are neither visible in the process list nor via the inspection features
@@ -187,7 +192,20 @@ class VpnCommandProcessor(CommandProcessor):
             pos_args (tuple)  : Positional command line arguments
                                 0 (mandatory) => 'init'
             named_args (dict) : Named command line arguments
-                                'ca-pass' => Password to protect CA related data with (empty to disable protection)
+                                'ca-pass'                     => Password to protect CA related data with (empty to disable protection)
+                                'ca-key-type'     (mandatory) => Private key type the Ca will use.
+                                'server-key-type' (mandatory) => Private key type the server will use.
+                                'client-key-type' (mandatory) => Private key type clients will use.
+                                                                 Must be one of the following:
+                                                                 - 'rsa2048'   : RSA, 2048 bit
+                                                                 - 'rsa3072'   : RSA, 3072 bit
+                                                                 - 'rsa4096'   : RSA, 4096 bit
+                                                                 - 'secp192r1' : ECC, SECG curve over a 192 bit prime field
+                                                                 - 'secp224r1' : ECC, NIST/SECG curve over a 224 bit prime field
+                                                                 - 'secp256k1' : ECC, SECG curve over a 256 bit prime field
+                                                                 - 'secp256r1' : ECC, NIST/SECG curve over a 256 bit prime field
+                                                                 - 'secp384r1' : ECC, NIST/SECG curve over a 384 bit prime field
+                                                                 - 'secp521r1' : ECC, NIST/SECG curve over a 521 bit prime field
 
         Returns:
             The application's exit code.
@@ -199,7 +217,37 @@ class VpnCommandProcessor(CommandProcessor):
             raise CommandLineArgumentError("Expecting 1 positional argument only, you specified {0} ({1})", len(pos_args), pos_args)
 
         # evaluate named command line arguments
-        ca_pass = named_args["ca-pass"][0] if len(named_args["ca-pass"]) > 0 else None
+        ca_pass  = named_args["ca-pass" ][0] if len(named_args["ca-pass"])  > 0 else None
+        ca_key_type = named_args["ca-key-type"][0] if len(named_args["ca-key-type"]) > 0 else None
+        server_key_type = named_args["server-key-type"][0] if len(named_args["server-key-type"]) > 0 else None
+        client_key_type = named_args["client-key-type"][0] if len(named_args["client-key-type"]) > 0 else None
+
+        # validate the 'ca-key-type' argument
+        if ca_key_type == None or not ca_key_type.lower() in [kt.name for kt in cc_ca.KeyTypes.all()]:
+            error = "Please specify a supported key type to use for the CA. You may specfify:\n"
+            max_length = max([len(x.name) for x in cc_ca.KeyTypes.all()])
+            line_format = "--ca-key-type={{0:{0}}}   {{1}}\n".format(max_length)
+            for type in cc_ca.KeyTypes.all():
+                error += line_format.format(type.name, type.description)
+            raise CommandLineArgumentError(error)
+
+        # validate the 'server-key-type' argument
+        if server_key_type == None or not server_key_type.lower() in [kt.name for kt in cc_ca.KeyTypes.all()]:
+            error = "Please specify a supported key type to use for the VPN server. You may specfify:\n"
+            max_length = max([len(x.name) for x in cc_ca.KeyTypes.all()])
+            line_format = "--server-key-type={{0:{0}}}   {{1}}\n".format(max_length)
+            for type in cc_ca.KeyTypes.all():
+                error += line_format.format(type.name, type.description)
+            raise CommandLineArgumentError(error)
+
+        # validate the 'client-key-type' argument
+        if client_key_type == None or not client_key_type.lower() in [kt.name for kt in cc_ca.KeyTypes.all()]:
+            error = "Please specify a supported key type to use for VPN clients. You may specfify:\n"
+            max_length = max([len(x.name) for x in cc_ca.KeyTypes.all()])
+            line_format = "--client-key-type={{0:{0}}}   {{1}}\n".format(max_length)
+            for type in cc_ca.KeyTypes.all():
+                error += line_format.format(type.name, type.description)
+            raise CommandLineArgumentError(error)
 
         # check whether the CA environment is already initialized
         ca = cc_ca.CertificateAuthority()
@@ -220,7 +268,7 @@ class VpnCommandProcessor(CommandProcessor):
                 raise cc_ca.PasswordRequiredError("Please specify the CA password as command line argument or run the container in terminal mode, if you want to enter the password interactively.")
 
         # initialize the CA environment
-        ca.init(ca_pass)
+        ca.init(ca_pass, ca_key_type, server_key_type, client_key_type)
 
         # success
         print("The CA environment was generated successfully.")
@@ -627,7 +675,7 @@ class VpnCommandProcessor(CommandProcessor):
         # -------------------------------------------------------------------------------------------------------------
 
         # read environment variable
-        self.__client_subnet_ipv6 = get_env_setting_string("CLIENT_SUBNET_IPV6", "fd00:DEAD:BEEF:AFFE::/64")
+        self.__client_subnet_ipv6 = get_env_setting_string("CLIENT_SUBNET_IPV6", "fd00:dead:beef:affe::/64")
         try:
             self.__client_subnet_ipv6 = IPNetwork(self.__client_subnet_ipv6)
         except AddrFormatError:

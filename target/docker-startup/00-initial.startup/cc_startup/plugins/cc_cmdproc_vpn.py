@@ -1319,8 +1319,7 @@ class VpnCommandProcessor(CommandProcessor):
             if create_server_cert:
 
                 # creating a new certficate requires the private key of the CA
-                ca_pass = None
-                if len(named_args["ca-pass"]) > 0: ca_pass = named_args[0]
+                ca_pass = named_args["ca-pass"][0] if "ca-pass" in named_args and len(named_args["ca-pass"]) > 0 else None
                 if ca_pass == None:
                     if sys.stdin.isatty():
                         ca_pass = getpass("Please enter the password of the CA: ").strip()

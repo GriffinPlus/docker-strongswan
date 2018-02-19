@@ -94,6 +94,17 @@ The following key types are supported:
 | secp384r1 | ECC, NIST/SECG curve over a 384 bit prime field (aka P-384)
 | secp521r1 | ECC, NIST/SECG curve over a 521 bit prime field (aka P-521)
 
+Beside the key types the subject that is written into the root certificate of the internal CA must also be set. This is done using the `--ca-cert-subject` parameter. The subject for server/client certificates is set analogously using the `--server-cert-subject` parameter respectively the `--client-cert-subject` parameter. All these parameters expect a properly formatted *Distinguished Name (DN)*. A DN describes the entity (CA, server, client) a certificate refers to. It consists of a list of hierarchically sorted attributes and looks like the following `CN=VPN Root CA,OU=Engineering,O=My Company,C=DE`. The following (common) attribute types are supported:
+
+| Attribute Type | Description                                         
+| :------------- | :---------------------------------------------------------------------------
+| CN             | Common Name
+| C              | Country Name (2-letter code, e.g. DE or US)
+| L              | Locality Name
+| O              | Organization Name
+| OU             | Organizational Unit Name
+| ST             | State/Province
+
 The internal CA can be set up interactively using the following command. You will be prompted to enter a password to protect the CA's private key.
 
 ```
@@ -116,15 +127,21 @@ docker run \
   --ca-pass=<my-ca-secret> \
   --ca-key-type=<key-type> \
   --server-key-type=<key-type> \
-  --client-key-type=<key-type>
+  --client-key-type=<key-type> \
+  --ca-cert-subject=<subject-dn> \
+  --server-cert-subject=<subject-dn> \
+  --client-cert-subject=<subject-dn>
   
-echo "<my-ca-secret>" | docker run -i \
+echo -e "<my-ca-secret>" | docker run -i \
   -v strongswan-data:/data \
   cloudycube/strongswan \
   init \
   --ca-key-type=<key-type> \
   --server-key-type=<key-type> \
-  --client-key-type=<key-type>
+  --client-key-type=<key-type> \
+  --ca-cert-subject=<subject-dn> \
+  --server-cert-subject=<subject-dn> \
+  --client-cert-subject=<subject-dn>
 ```
 
 ### Step 4 - Run the StrongSwan Container
@@ -346,7 +363,7 @@ docker run \
   add client <id> --ca-pass=<my-ca-secret> --pkcs12-pass=<my-pkcs12-secret>
 
 # passwords via stdin
-echo "<my-ca-secret>\n<my-pkcs12-secret>" | docker run -i \
+echo -e "<my-ca-secret>\n<my-pkcs12-secret>" | docker run -i \
   -v strongswan-data:/data \
   -v $PWD/client-data/:/data-out \
   cloudycube/strongswan \
@@ -381,7 +398,7 @@ docker run \
   disable|enable client <id> [<certificate-serial>] --ca-pass=<my-ca-secret>
   
 # password via stdin
-echo "<my-ca-secret>" | docker run -i \
+echo -e "<my-ca-secret>" | docker run -i \
   --volume strongswan-data:/data \
   cloudycube/strongswan \
   disable|enable client <id> [<certificate-serial>]

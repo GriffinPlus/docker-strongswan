@@ -9,7 +9,11 @@ import shutil
 import socket
 import sys
 
-from datetime import datetime
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption, load_pem_private_key
+from cryptography.x509.oid import NameOID
+from datetime import datetime, timedelta
 from getpass import getpass
 from OpenSSL import crypto
 from mako.template import Template
@@ -135,31 +139,40 @@ class VpnCommandProcessor(CommandProcessor):
 
         # register command handlers
         self.add_handler(self.run,            PositionalArgument("run"),
-                                              NamedArgument("ca-pass", from_stdin=True))
+                                              NamedArgument("ca-pass", min_occurrence = 0, max_occurrence = 1, from_stdin=True))
 
         self.add_handler(self.run,            PositionalArgument("run-and-enter"),
-                                              NamedArgument("ca-pass", from_stdin=True))
+                                              NamedArgument("ca-pass", min_occurrence = 0, max_occurrence = 1, from_stdin=True))
 
         self.add_handler(self.init,           PositionalArgument("init"),
-                                              NamedArgument("ca-pass", from_stdin=True),
-                                              NamedArgument("ca-key-type", min_occurrence = 1, max_occurrence = 1),
-                                              NamedArgument("server-key-type", min_occurrence = 1, max_occurrence = 1),
-                                              NamedArgument("client-key-type", min_occurrence = 1, max_occurrence = 1))
+                                              NamedArgument("ca-pass",             min_occurrence = 0, max_occurrence = 1, from_stdin=True),
+                                              NamedArgument("ca-key-type",         min_occurrence = 1, max_occurrence = 1),
+                                              NamedArgument("server-key-type",     min_occurrence = 1, max_occurrence = 1),
+                                              NamedArgument("client-key-type",     min_occurrence = 1, max_occurrence = 1),
+                                              NamedArgument("ca-cert-subject",     min_occurrence = 1, max_occurrence = 1),
+                                              NamedArgument("server-cert-subject", min_occurrence = 1, max_occurrence = 1),
+                                              NamedArgument("client-cert-subject", min_occurrence = 1, max_occurrence = 1))
 
-        self.add_handler(self.add_client,     PositionalArgument("add"), PositionalArgument("client"),
-                                              NamedArgument("ca-pass", from_stdin=True),
-                                              NamedArgument("out-format"),
-                                              NamedArgument("pkcs12-pass", from_stdin=True),
-                                              NamedArgument("pkcs12-file"))
+        self.add_handler(self.add_client,     PositionalArgument("add"),
+                                              PositionalArgument("client"),
+                                              NamedArgument("ca-pass",     min_occurrence = 0, max_occurrence = 1, from_stdin=True),
+                                              NamedArgument("out-format",  min_occurrence = 0, max_occurrence = 1),
+                                              NamedArgument("pkcs12-pass", min_occurrence = 0, max_occurrence = 1, from_stdin=True),
+                                              NamedArgument("pkcs12-file", min_occurrence = 0, max_occurrence = 1))
 
-        self.add_handler(self.list_clients,   PositionalArgument("list"), PositionalArgument("clients"),
-                                              NamedArgument("out-format"))
+        self.add_handler(self.list_clients,   PositionalArgument("list"),
+                                              PositionalArgument("clients"),
+                                              NamedArgument("out-format", min_occurrence = 0, max_occurrence = 1))
 
-        self.add_handler(self.disable_client, PositionalArgument("disable"), PositionalArgument("client"),
-                                              NamedArgument("ca-pass", from_stdin=True), NamedArgument("out-format"))
+        self.add_handler(self.disable_client, PositionalArgument("disable"),
+                                              PositionalArgument("client"),
+                                              NamedArgument("ca-pass", min_occurrence = 0, max_occurrence = 1, from_stdin=True),
+                                              NamedArgument("out-format", min_occurrence = 0, max_occurrence = 1))
 
-        self.add_handler(self.enable_client,  PositionalArgument("enable"), PositionalArgument("client"),
-                                              NamedArgument("ca-pass", from_stdin=True), NamedArgument("out-format"))
+        self.add_handler(self.enable_client,  PositionalArgument("enable"),
+                                              PositionalArgument("client"),
+                                              NamedArgument("ca-pass", min_occurrence = 0, max_occurrence = 1, from_stdin=True),
+                                              NamedArgument("out-format", min_occurrence = 0, max_occurrence = 1))
 
         # register exception handlers for exceptions raised by the internal CA
         self.add_exception_handler(self.__handle_exceptions, cc_ca.NotInitializedError)
@@ -192,20 +205,25 @@ class VpnCommandProcessor(CommandProcessor):
             pos_args (tuple)  : Positional command line arguments
                                 0 (mandatory) => 'init'
             named_args (dict) : Named command line arguments
-                                'ca-pass'                     => Password to protect CA related data with (empty to disable protection)
-                                'ca-key-type'     (mandatory) => Private key type the Ca will use.
-                                'server-key-type' (mandatory) => Private key type the server will use.
-                                'client-key-type' (mandatory) => Private key type clients will use.
-                                                                 Must be one of the following:
-                                                                 - 'rsa2048'   : RSA, 2048 bit
-                                                                 - 'rsa3072'   : RSA, 3072 bit
-                                                                 - 'rsa4096'   : RSA, 4096 bit
-                                                                 - 'secp192r1' : ECC, SECG curve over a 192 bit prime field
-                                                                 - 'secp224r1' : ECC, NIST/SECG curve over a 224 bit prime field
-                                                                 - 'secp256k1' : ECC, SECG curve over a 256 bit prime field
-                                                                 - 'secp256r1' : ECC, NIST/SECG curve over a 256 bit prime field
-                                                                 - 'secp384r1' : ECC, NIST/SECG curve over a 384 bit prime field
-                                                                 - 'secp521r1' : ECC, NIST/SECG curve over a 521 bit prime field
+                                'ca-pass'                         => Password to protect CA related data with (empty to disable protection)
+                                'ca-key-type'         (mandatory) => Private key type the Ca will use.
+                                'server-key-type'     (mandatory) => Private key type the server will use.
+                                'client-key-type'     (mandatory) => Private key type clients will use.
+                                                                     Must be one of the following:
+                                                                     - 'rsa2048'   : RSA, 2048 bit
+                                                                     - 'rsa3072'   : RSA, 3072 bit
+                                                                     - 'rsa4096'   : RSA, 4096 bit
+                                                                     - 'secp192r1' : ECC, SECG curve over a 192 bit prime field
+                                                                     - 'secp224r1' : ECC, NIST/SECG curve over a 224 bit prime field
+                                                                     - 'secp256k1' : ECC, SECG curve over a 256 bit prime field
+                                                                     - 'secp256r1' : ECC, NIST/SECG curve over a 256 bit prime field
+                                                                     - 'secp384r1' : ECC, NIST/SECG curve over a 384 bit prime field
+                                                                     - 'secp521r1' : ECC, NIST/SECG curve over a 521 bit prime field
+                                'ca-cert-subject'     (mandatory) => Subject name of the CA certificate (Distinguished name, DN)
+                                'server-cert-subject' (mandatory) => Subject name of generated server certificate (Distinguished name, DN)
+                                                                     The value of the 'CN' attribute is overwritten with the server's hostname.
+                                'client-cert-subject' (mandatory) => Subject name of generated client certificate (Distinguished name, DN)
+                                                                     The value of the 'CN' attribute is overwritten with the client's identity.
 
         Returns:
             The application's exit code.
@@ -217,10 +235,13 @@ class VpnCommandProcessor(CommandProcessor):
             raise CommandLineArgumentError("Expecting 1 positional argument only, you specified {0} ({1})", len(pos_args), pos_args)
 
         # evaluate named command line arguments
-        ca_pass  = named_args["ca-pass" ][0] if len(named_args["ca-pass"])  > 0 else None
-        ca_key_type = named_args["ca-key-type"][0] if len(named_args["ca-key-type"]) > 0 else None
-        server_key_type = named_args["server-key-type"][0] if len(named_args["server-key-type"]) > 0 else None
-        client_key_type = named_args["client-key-type"][0] if len(named_args["client-key-type"]) > 0 else None
+        ca_pass             = named_args["ca-pass" ][0]            if len(named_args["ca-pass"])  > 0            else None
+        ca_key_type         = named_args["ca-key-type"][0]         if len(named_args["ca-key-type"]) > 0         else None
+        server_key_type     = named_args["server-key-type"][0]     if len(named_args["server-key-type"]) > 0     else None
+        client_key_type     = named_args["client-key-type"][0]     if len(named_args["client-key-type"]) > 0     else None
+        ca_cert_subject     = named_args["ca-cert-subject"][0]     if len(named_args["ca-cert-subject"]) > 0     else None
+        server_cert_subject = named_args["server-cert-subject"][0] if len(named_args["server-cert-subject"]) > 0 else None
+        client_cert_subject = named_args["client-cert-subject"][0] if len(named_args["client-cert-subject"]) > 0 else None
 
         # validate the 'ca-key-type' argument
         if ca_key_type == None or not ca_key_type.lower() in [kt.name for kt in cc_ca.KeyTypes.all()]:
@@ -249,6 +270,14 @@ class VpnCommandProcessor(CommandProcessor):
                 error += line_format.format(type.name, type.description)
             raise CommandLineArgumentError(error)
 
+        # validate the arguments 'ca-cert-subject', 'server-cert-subject' and 'client-cert-subject'
+        try:     cc_ca.CertificateAuthority.build_x509_name(ca_cert_subject)
+        except:  raise CommandLineArgumentError("Invalid DN ({0}).", ca_cert_subject)
+        try:     cc_ca.CertificateAuthority.build_x509_name(server_cert_subject)
+        except:  raise CommandLineArgumentError("Invalid DN ({0}).", server_cert_subject)
+        try:     cc_ca.CertificateAuthority.build_x509_name(client_cert_subject)
+        except:  raise CommandLineArgumentError("Invalid DN ({0}).", client_cert_subject)
+
         # check whether the CA environment is already initialized
         ca = cc_ca.CertificateAuthority()
         if ca.is_inited():
@@ -268,7 +297,7 @@ class VpnCommandProcessor(CommandProcessor):
                 raise cc_ca.PasswordRequiredError("Please specify the CA password as command line argument or run the container in terminal mode, if you want to enter the password interactively.")
 
         # initialize the CA environment
-        ca.init(ca_pass, ca_key_type, server_key_type, client_key_type)
+        ca.init(ca_pass, ca_key_type, server_key_type, client_key_type, ca_cert_subject, server_cert_subject, client_cert_subject)
 
         # success
         print("The CA environment was generated successfully.")
@@ -340,7 +369,7 @@ class VpnCommandProcessor(CommandProcessor):
         if not os.path.ismount(OUTPUT_DIRECTORY) or is_mount_point_readonly(OUTPUT_DIRECTORY):
             raise OutputDirectoryMountError("The data output directory ({0}) is not mounted read-write in the container.", OUTPUT_DIRECTORY)
 
-        # check whether the specified PKCS12 file is writeable 
+        # check whether the specified PKCS12 file is writeable
         # -----------------------------------------------------------------------------------------
         pkcs12_path = None
         if pkcs12_file:
@@ -372,15 +401,15 @@ class VpnCommandProcessor(CommandProcessor):
         # create a PKCS12 package containing the private key and the certificate
         # -----------------------------------------------------------------------------------------
         client_p12 = crypto.PKCS12Type()
-        client_p12.set_ca_certificates([ca.cert])
-        client_p12.set_privatekey(client_key)
-        client_p12.set_certificate(client_cert)
+        client_p12.set_ca_certificates([ crypto.X509.from_cryptography(ca.cert) ])
+        client_p12.set_privatekey(crypto.load_privatekey(crypto.FILETYPE_PEM, client_key.private_bytes(Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption())))
+        client_p12.set_certificate(crypto.X509.from_cryptography(client_cert))
         client_p12_data = client_p12.export(pkcs12_pass)
 
         # generate path of the PKCS12 archive, if the filename was not specified explicitly
         # -----------------------------------------------------------------------------------------
         if not pkcs12_path:
-           pkcs12_path = os.path.join(OUTPUT_DIRECTORY, "{0} (CSN{1:010}).p12".format(identity, client_cert.get_serial_number()))
+           pkcs12_path = os.path.join(OUTPUT_DIRECTORY, "{0} (CSN{1:010}).p12".format(identity, client_cert.serial_number))
            pkcs12_path = os.path.normpath(pkcs12_path)
 
         # write PKCS12 archive
@@ -439,7 +468,7 @@ class VpnCommandProcessor(CommandProcessor):
         # print list
         # -----------------------------------------------------------------------------------------
         client_certs = ca.get_vpn_client_certificates(include_expired = True, include_revoked = True)
-        sorted_client_certs = sorted(client_certs, key=lambda c: c.get_serial_number())                                    # sort by secondary criterion
+        sorted_client_certs = sorted(client_certs, key=lambda c: c.serial_number)                                          # sort by secondary criterion
         sorted_client_certs = sorted(sorted_client_certs, key=lambda c: self.__get_client_certificate_identity(c).lower()) # sort by primary criterion
 
         if out_format.lower() == "text":
@@ -498,7 +527,7 @@ class VpnCommandProcessor(CommandProcessor):
             try:
                 cert_serial = int(cert_serial)
             except ValueError:
-                raise CommandLineArgumentError("The specified certificate certial number ({0}) is invalid.", cert_serial)
+                raise CommandLineArgumentError("The specified certificate serial number ({0}) is invalid.", cert_serial)
 
         # perform common handler stuff
         # -----------------------------------------------------------------------------------------
@@ -508,21 +537,22 @@ class VpnCommandProcessor(CommandProcessor):
         # -----------------------------------------------------------------------------------------
 
         # get clients
-        client_certs = ca.get_vpn_client_certificates(include_expired = False, include_revoked = False)
+        client_certs = ca.get_vpn_client_certificates(identity = identity, include_expired = False, include_revoked = False)
 
         # revoke certificate(s)
         revoked_certs = []
         for client_cert in client_certs:
-            if cert_serial == None or cert_serial == client_cert.get_serial_number():
-                ca.revoke_certificate(client_cert.get_serial_number(), "certificate_hold")
+            if cert_serial == None or cert_serial == client_cert.serial_number:
+                ca.revoke_certificate(client_cert.serial_number, "certificate_hold")
                 revoked_certs.append(client_cert)
 
         # abort, if no certificate was revoked
         if len(revoked_certs) == 0:
-            raise FileNotFoundError("The specified identity ({0}) has no active certificates.", identity)
+            if cert_serial: raise FileNotFoundError("The specified identity ({0}) does not have an active certificate with the specified serial number ({1}).", identity, cert_serial)
+            else:           raise FileNotFoundError("The specified identity ({0}) does not have any active certificates.", identity)
 
         # re-read effected records
-        revoked_certs = [ ca.get_certificate(x.get_serial_number()) for x in revoked_certs ] 
+        revoked_certs = [ ca.get_certificate(x.serial_number) for x in revoked_certs ]
 
         # print effected certificates
         if out_format.lower() == "text":
@@ -546,7 +576,7 @@ class VpnCommandProcessor(CommandProcessor):
 
         Args:
             pos_args (tuple)  : Position encoded command line arguments:
-                                0 (mandatory) => 'disable'
+                                0 (mandatory) => 'enable'
                                 1 (mandatory) => 'client'
                                 2 (mandatory) => Identity of the client (e-mail address)
                                 3 (optional)  => Serial number of the certificate to unrevoke (all certificates that are not expired are unrevoked, if not specified)
@@ -591,21 +621,22 @@ class VpnCommandProcessor(CommandProcessor):
         # -----------------------------------------------------------------------------------------
 
         # get clients
-        client_certs = ca.get_vpn_client_certificates(include_expired = False, include_revoked = True)
+        client_certs = ca.get_vpn_client_certificates(identity = identity, include_expired = False, include_revoked = True)
 
         # unrevoke certificate(s)
         unrevoked_certs = []
         for client_cert in client_certs:
-            if cert_serial == None or cert_serial == client_cert.get_serial_number():
-                ca.unrevoke_certificate(client_cert.get_serial_number())
+            if cert_serial == None or cert_serial == client_cert.serial_number:
+                ca.unrevoke_certificate(client_cert.serial_number)
                 unrevoked_certs.append(client_cert)
 
         # abort, if no certificate was unrevoked
         if len(unrevoked_certs) == 0:
-            raise FileNotFoundError("The specified identity ({0}) does not have any revoked certificates that have not expired, yet.", identity)
+            if cert_serial: raise FileNotFoundError("The specified identity ({0}) does not have a revoked certificates with the specified serial number ({1}).", identity, cert_serial)
+            else:           raise FileNotFoundError("The specified identity ({0}) does not have any revoked certificates.", identity)
 
         # re-read effected certificates
-        unrevoked_certs = [ ca.get_certificate(x.get_serial_number()) for x in unrevoked_certs ] 
+        unrevoked_certs = [ ca.get_certificate(x.serial_number) for x in unrevoked_certs ]
 
         # print effected certificates
         if out_format.lower() == "text":
@@ -1240,26 +1271,29 @@ class VpnCommandProcessor(CommandProcessor):
 
                 # read server key
                 with open(INTERNAL_PKI_SERVER_KEY_FILE, "rb") as f:
-                    server_key = crypto.load_privatekey(crypto.FILETYPE_PEM, f.read())
+                    server_key = load_pem_private_key(f.read(), None, default_backend())
 
                 # read server certificate
                 with open(INTERNAL_PKI_SERVER_CERT_FILE, "rb") as f:
-                    server_cert = crypto.load_certificate(crypto.FILETYPE_PEM, f.read())
+                    server_cert = x509.load_pem_x509_certificate(f.read(), default_backend())
 
-                if server_cert.get_issuer() != self.__ca.cert.get_subject():
+                if server_cert.issuer != self.__ca.cert.issuer:
                     Log.write_note("The server certificate was not issued by the internal CA. The certificate must be regenerated.")
                     create_server_cert = True
 
                 # check whether the server certificate has expired
                 if not create_server_cert:
-                    if server_cert.has_expired():
-                        Log.write_note("The server certificate has expired. The certificate must be regenerated.")
+                    if datetime.utcnow() > server_cert.not_valid_after:
+                        Log.write_note("The server certificate has expired on {0}. The certificate must be regenerated.", server_cert.not_valid_after)
+                        create_server_cert = True
+                    elif datetime.utcnow() + timedelta(30,0,0) > server_cert.not_valid_after:
+                        Log.write_note("The server certificate expires on {0}. Regenerating the certificate to ensure trouble-free operation.", server_cert.not_valid_after)
                         create_server_cert = True
 
                 # check CN in certificate
                 if not create_server_cert:
-                    cert_hostname = server_cert.get_subject().CN
-                    expected_hostname = ":".join(sans[0].split(":")[1:])
+                    cert_hostname = server_cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
+                    expected_hostname = sans[0].split(":", 1)[1]
                     if cert_hostname != expected_hostname:
                         Log.write_warning("The server certificate was made for '{0}', but '{1}' is currently configured. The certficate must be regenerated.", cert_hostname, expected_hostname)
                         create_server_cert = True
@@ -1267,13 +1301,13 @@ class VpnCommandProcessor(CommandProcessor):
                 # check subjectAltName extension
                 if not create_server_cert:
                     foundSubjectAltNameExtension = False
-                    for cert_extension_index in range(0, server_cert.get_extension_count()):
-                        extension = server_cert.get_extension(cert_extension_index)
-                        if extension.get_short_name() == b'subjectAltName':
-                            cert_subjects = str(extension)
-                            expected_subjects = ", ".join(sans)
-                            if cert_subjects != expected_subjects:
-                                Log.write_warning("Found extension 'subjectAltName', but it is '{0}', should be '{1}'.", cert_subjects, expected_subjects)
+                    for extension in server_cert.extensions:
+                        if extension.oid == x509.SubjectAlternativeName.oid:
+                            expected_san = cc_ca.CertificateAuthority.build_san(sans)
+                            if extension.value != expected_san:
+                                Log.write_warning("Found extension 'subjectAltName', but it is '{0}', should be '{1}'.",
+                                                  ", ".join([x.value for x in extension.value]),
+                                                  ", ".join([x.value for x in expected_san]))
                                 create_server_cert = True
                             foundSubjectAltNameExtension = True
                             break
@@ -1299,13 +1333,16 @@ class VpnCommandProcessor(CommandProcessor):
 
                 # write key file
                 with open(INTERNAL_PKI_SERVER_KEY_FILE, "wb+") as f:
-                    f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM, server_key))
+                    f.write(server_key.private_bytes(
+                        encoding = Encoding.PEM,
+                        format = PrivateFormat.TraditionalOpenSSL,
+                        encryption_algorithm = NoEncryption()))
                 os.chown(INTERNAL_PKI_SERVER_KEY_FILE, 0, 0)
                 os.chmod(INTERNAL_PKI_SERVER_KEY_FILE, S_IRUSR | S_IWUSR)
 
                 # write certificate file
                 with open(INTERNAL_PKI_SERVER_CERT_FILE, "wb+") as f:
-                    f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, server_cert))
+                    f.write(server_cert.public_bytes(Encoding.PEM))
                 os.chown(INTERNAL_PKI_SERVER_CERT_FILE, 0, 0)
                 os.chmod(INTERNAL_PKI_SERVER_CERT_FILE, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
 
@@ -1318,7 +1355,7 @@ class VpnCommandProcessor(CommandProcessor):
             self.__server_cert_path = INTERNAL_PKI_SERVER_CERT_FILE
 
         # log the certificate of the VPN server
-        dump = crypto.dump_certificate(crypto.FILETYPE_TEXT, server_cert).decode('utf-8')
+        dump = crypto.dump_certificate(crypto.FILETYPE_TEXT, crypto.X509.from_cryptography(server_cert)).decode('utf-8')
         Log.write_info("Certificate of the VPN server\n{1}\n{0}\n{1}", dump, SEPARATOR_LINE)
 
 
@@ -1350,6 +1387,7 @@ class VpnCommandProcessor(CommandProcessor):
     # -------------------------------------------------------------------------------------------------------------------------------------
     # Helper functions
     # -------------------------------------------------------------------------------------------------------------------------------------
+
 
     def __handle_exceptions(self, error):
         """
@@ -1399,11 +1437,7 @@ class VpnCommandProcessor(CommandProcessor):
 
         """
 
-        subject = client_cert.get_subject().get_components()
-        subject = ",".join(["{0}={1}".format(key.decode("utf-8"), value.decode("utf-8")) for key, value in subject])
-        identity = subject.split(",")[-1].lstrip("CN=")
-
-        return identity
+        return client_cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
 
 
     # -------------------------------------------------------------------------------------------------------------------------------------
@@ -1421,13 +1455,10 @@ class VpnCommandProcessor(CommandProcessor):
 
         """
 
-        # prepare data to collect 
+        # prepare data to collect
         field_names = [ "Identity", "Serial", "Not Before", "Not After", "Revoked", *additional_field_names ]
         field_widths = [ len(name) for name in field_names ]
         field_values = []
-
-        # get the list of revocations out of the CRL
-        revoked = crl.get_revoked()
 
         for index, client_cert in enumerate(client_certs):
 
@@ -1435,22 +1466,21 @@ class VpnCommandProcessor(CommandProcessor):
             identity = self.__get_client_certificate_identity(client_cert)
 
             # get start of validity period (datetime)
-            notBefore = datetime.strptime(client_cert.get_notBefore().decode("ascii"), ASN1_DATETIME_FORMAT)
+            notBefore = client_cert.not_valid_before
 
             # get end of validity period (datetime)
-            notAfter = datetime.strptime(client_cert.get_notAfter().decode("ascii"), ASN1_DATETIME_FORMAT)
+            notAfter = client_cert.not_valid_after
 
             # get revocation date (datetime or None)
             revocation_date = None
-            if revoked:
-                for revoke in revoked:
-                    if client_cert.get_serial_number() == int(revoke.get_serial(), 16):
-                        revocation_date = datetime.strptime(revoke.get_rev_date().decode("ascii"), ASN1_DATETIME_FORMAT)
-                        break
+            for revoked in crl:
+               if client_cert.serial_number == revoked.serial_number:
+                    revocation_date = revoked.revocation_date
+                    break
 
             # format data and store record
             record = [identity,
-                      "{0:010}".format(client_cert.get_serial_number()),
+                      "{0:010}".format(client_cert.serial_number),
                       notBefore.strftime(TEXT_OUTPUT_DATETIME_FORMAT),
                       notAfter.strftime(TEXT_OUTPUT_DATETIME_FORMAT),
                       revocation_date.strftime(TEXT_OUTPUT_DATETIME_FORMAT) if revocation_date else ""]
@@ -1531,9 +1561,6 @@ class VpnCommandProcessor(CommandProcessor):
             line += "\t" + field_name
         print(line)
 
-        # get the list of revocations out of the CRL
-        revoked = crl.get_revoked()
-
         # print certificates (one line per certificate)
         for index, client_cert in enumerate(client_certs):
 
@@ -1541,22 +1568,21 @@ class VpnCommandProcessor(CommandProcessor):
             identity = self.__get_client_certificate_identity(client_cert)
 
             # get start of validity period (datetime)
-            notBefore = datetime.strptime(client_cert.get_notBefore().decode("ascii"), ASN1_DATETIME_FORMAT)
+            notBefore = client_cert.not_valid_before
 
             # get end of validity period (datetime)
-            notAfter = datetime.strptime(client_cert.get_notAfter().decode("ascii"), ASN1_DATETIME_FORMAT)
+            notAfter = client_cert.not_valid_after
 
             # get revocation date (datetime or None)
             revocation_date = None
-            if revoked:
-                for revoke in revoked:
-                    if client_cert.get_serial_number() == int(revoke.get_serial(), 16):
-                        revocation_date = datetime.strptime(revoke.get_rev_date().decode("ascii"), ASN1_DATETIME_FORMAT)
-                        break
+            for revoked in crl:
+                if client_cert.serial_number == revoked.serial_number:
+                    revocation_date = revoked.revocation_date
+                    break
 
             # format data and store record
             record = [identity,
-                      str(client_cert.get_serial_number()),
+                      str(client_cert.serial_number),
                       notBefore.isoformat(),
                       notAfter.isoformat(),
                       revocation_date.isoformat() if revocation_date else ""]

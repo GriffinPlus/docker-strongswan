@@ -6,18 +6,18 @@ License: MIT License
 
 import configparser
 import os
+import re
 import sys
 
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
-from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
+from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, BestAvailableEncryption, NoEncryption, load_pem_private_key
 from cryptography.x509.oid import NameOID
 from datetime import datetime, timedelta
 from glob import iglob
-from OpenSSL import crypto, SSL
-from cryptography import x509
+from ipaddress import ip_address
 from stat import S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP, S_IROTH, S_IWOTH
 from ..cc_log import Log
 from ..cc_helpers import is_email_address
@@ -184,8 +184,7 @@ class KeyType:
 
         """
         key = self.factory()
-        key_pem = key.private_bytes(encoding = Encoding.PEM, format = PrivateFormat.TraditionalOpenSSL, encryption_algorithm = NoEncryption())
-        return crypto.load_privatekey(crypto.FILETYPE_PEM, key_pem)
+        return key
 
 
 class KeyTypes:
@@ -310,23 +309,17 @@ class CertificateAuthority:
 
         # try to decrypt the private key of the CA with the password
         try:
-
             with open(self.__ca_key_path, "rb") as f:
-                if password == None: ca_key = crypto.load_privatekey(crypto.FILETYPE_PEM, f.read(), b"")
-                else:                ca_key = crypto.load_privatekey(crypto.FILETYPE_PEM, f.read(), password.encode("utf-8"))
+                if password: ca_key = load_pem_private_key(f.read(), password.encode("utf-8"), default_backend())
+                else:        ca_key = load_pem_private_key(f.read(), None, default_backend())
+        except ValueError:
+            raise InvalidPasswordError("Decrypting CA private key failed. Wrong password.")
+        except TypeError:
+            if password: raise InvalidPasswordError("Password was specified, but the CA private key is not encrypted.")
+            else:        raise InvalidPasswordError("The CA private key is encrypted, but password was not specified.")
 
-            self.__ca_password = password
+        self.__ca_password = password
 
-        except crypto.Error as e:
-
-            for arg in e.args:
-                for error in arg:
-                    if error[2] == "bad decrypt" or error[2] == "bad password read":
-                        # decrypting private key failed
-                        raise InvalidPasswordError("Decrypting CA private key failed. Wrong password.")
-
-            # some other OpenSSL error occurred
-            raise
 
     # -------------------------------------------------------------------------------------------------------------------------------------
 
@@ -348,18 +341,12 @@ class CertificateAuthority:
 
             # try to read the private key without a password
             with open(self.__ca_key_path, "rb") as f:
-                ca_key = crypto.load_privatekey(crypto.FILETYPE_PEM, f.read(), b"")
+                ca_key = load_pem_private_key(f.read(), None, backend=default_backend())
 
-        except crypto.Error as e:
+        except TypeError:
 
-            for arg in e.args:
-                for error in arg:
-                    if error[2] == "bad password read":
-                        # private key is encrypted
-                        return True
-
-            # some other OpenSSL error occurred
-            raise
+            # private key is encrypted
+            return True
 
         # private key is not encrypted
         return False
@@ -384,7 +371,7 @@ class CertificateAuthority:
 
         # load the certificate
         with open(self.__ca_cert_path, "rb") as f:
-            return crypto.load_certificate(crypto.FILETYPE_PEM, f.read())
+            return x509.load_pem_x509_certificate(f.read(), default_backend())
 
 
     # -------------------------------------------------------------------------------------------------------------------------------------
@@ -408,9 +395,14 @@ class CertificateAuthority:
         Loads the private key of the CA (the 'password' property must be set, if CA related data is encrypted).
 
         Exceptions:
-            NotInitializedError : The CA environment is not initialized.
+            NotInitializedError   : The CA environment is not initialized.
+            PasswordRequiredError : The key is encrypted, but no password is specified.
 
         """
+
+        # ensure that the CA environment is initialized
+        if not self.is_inited():
+            raise NotInitializedError("The CA is not initialized.")
 
         # ensure that the CA environment is initialized and the password is set, if necessary
         if self.password_required and not self.__ca_password:
@@ -418,8 +410,8 @@ class CertificateAuthority:
 
         # try to decrypt the private key of the CA with the password
         with open(self.__ca_key_path, "rb") as f:
-            if not self.__ca_password: return crypto.load_privatekey(crypto.FILETYPE_PEM, f.read(), b"")
-            else:                      return crypto.load_privatekey(crypto.FILETYPE_PEM, f.read(), self.__ca_password.encode("utf-8"))
+            if self.__ca_password: return load_pem_private_key(f.read(), self.__ca_password.encode("utf-8"), default_backend())
+            else:                  return load_pem_private_key(f.read(), None, default_backend())
 
 
     # -------------------------------------------------------------------------------------------------------------------------------------
@@ -441,7 +433,7 @@ class CertificateAuthority:
 
         # load the CRL
         with open(self.__ca_crl_path, "rb") as f:
-            return crypto.load_crl(crypto.FILETYPE_PEM, f.read())
+            return x509.load_pem_x509_crl(f.read(), default_backend())
 
 
     # -------------------------------------------------------------------------------------------------------------------------------------
@@ -459,18 +451,24 @@ class CertificateAuthority:
     # -------------------------------------------------------------------------------------------------------------------------------------
 
 
-    def init(self, password, ca_key_type, server_key_type, client_key_type):
+    def init(self, password, ca_key_type, server_key_type, client_key_type, ca_subject_dn, server_subject_dn, client_subject_dn):
         """
         Initialized the CA environment generating related data (private key, certificate and filesystem structure).
 
         Args:
-            password (str)        : Password to protect CA related data with (None, if you don't want to use any protection)
-            ca_key_type (str)     : Type of the private key to create for the CA. See class 'KeyType' for supported key types.
-            server_key_type (str) : Type of the private key to create for the server lateron. See class 'KeyType' for supported key types.
-            client_key_type (str) : Type of the private key to use for clients created lateron. See class 'KeyType' for supported key types.
+            password (str)          : Password to protect CA related data with (None, if you don't want to use any protection)
+            ca_key_type (str)       : Type of the private key to create for the CA. See class 'KeyType' for supported key types.
+            server_key_type (str)   : Type of the private key to create for the server lateron. See class 'KeyType' for supported key types.
+            client_key_type (str)   : Type of the private key to use for clients created lateron. See class 'KeyType' for supported key types.
+            ca_subject_dn (str)     : Subject name to put into the X.509 certificate of the CA (Distinguished name, DN).
+            server_subject_dn (str) : Subject name to put into the X.509 certificate of the VPN server (Distinguished name, DN).
+                                      The 'CN' attribute will be overwritten using the VPN server's primary host name.
+            client_subject_dn (str) : Subject name to put into the X.509 certificate of VPN clients (Distinguished name, DN).
+                                      The 'CN' attribute will be overwritten using the VPN client's identity.
 
         Exceptions:
             AlreadyInitializedError : The CA is already initialized (associated files are already present).
+            ArgumentError           : One of the arguments is invalid.
 
         """
 
@@ -499,47 +497,62 @@ class CertificateAuthority:
         if not client_key_type.lower() in [kt.name for kt in KeyTypes.all()]:
             raise ArgumentError("Invalid key type ({0})".format(client_key_type))
 
+        # ensure that the specified subject DNs are valid
+        # ---------------------------------------------------------------------
+        try:
+            ca_subject = CertificateAuthority.build_x509_name(ca_subject_dn)
+        except:
+            raise ArgumentError("Invalid subject DN ({0})".format(ca_subject_dn))
+
+        try:
+            server_subject = CertificateAuthority.build_x509_name(server_subject_dn)
+        except:
+            raise ArgumentError("Invalid subject DN ({0})".format(server_subject_dn))
+
+        try:
+            client_subject = CertificateAuthority.build_x509_name(client_subject_dn)
+        except:
+            raise ArgumentError("Invalid subject DN ({0})".format(client_subject_dn))
+
         # create the CA's private key
         # ---------------------------------------------------------------------
         ca_key = KeyTypes.get_by_name(ca_key_type).create_key()
 
         # create the CA's certificate
         # ---------------------------------------------------------------------
-        ca_cert = crypto.X509()
-        ca_cert.get_subject().C  = "DE"
-        ca_cert.get_subject().ST = "Berlin"
-        ca_cert.get_subject().L  = "Berlin"
-        ca_cert.get_subject().O  = "CloudyCube"
-        ca_cert.get_subject().CN = "Internal CA for VPN"
-        ca_cert.set_serial_number(self.get_next_serial_number())
-        ca_cert.gmtime_adj_notBefore(0)
-        ca_cert.gmtime_adj_notAfter(10*365*24*60*60)
-        ca_cert.set_issuer(ca_cert.get_subject())
-        ca_cert.set_pubkey(ca_key)
-        ca_cert.add_extensions([
-            crypto.X509Extension(b"basicConstraints", True, b"CA:TRUE, pathlen:0"),
-            crypto.X509Extension(b"keyUsage", True, b"keyCertSign, cRLSign"),
-            crypto.X509Extension(b"subjectKeyIdentifier", False, b"hash", subject=ca_cert),
-        ])
-        ca_cert.add_extensions([
-          crypto.X509Extension(b"authorityKeyIdentifier", False, b"keyid:always", issuer=ca_cert)  
-        ])
-
-        ca_cert.sign(ca_key, "sha256")
+        ten_years = timedelta(10*365, 0, 0)
+        public_key = ca_key.public_key()
+        builder = x509.CertificateBuilder()
+        builder = builder.subject_name(ca_subject)
+        builder = builder.issuer_name(ca_subject)  # self-signed
+        builder = builder.serial_number(self.get_next_serial_number())
+        builder = builder.not_valid_before(datetime.utcnow())
+        builder = builder.not_valid_after(datetime.utcnow() + ten_years)
+        builder = builder.public_key(public_key)
+        builder = builder.add_extension(x509.BasicConstraints(True, 0), critical = True)
+        builder = builder.add_extension(x509.KeyUsage(digital_signature = False,
+                                                      content_commitment = False,
+                                                      key_encipherment = False,
+                                                      data_encipherment = False,
+                                                      key_agreement = False,
+                                                      key_cert_sign = True,
+                                                      crl_sign = True,
+                                                      encipher_only = False,
+                                                      decipher_only = False),
+                                        critical = True)
+        builder = builder.add_extension(x509.SubjectKeyIdentifier.from_public_key(public_key), critical = False)
+        builder = builder.add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(public_key), critical = False)
+        ca_cert = builder.sign(private_key=ca_key, algorithm=hashes.SHA256(), backend=default_backend())
 
         # create the CRL
         # ---------------------------------------------------------------------
-        ski = ca_cert.to_cryptography().extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
-        ca_crl = x509.CertificateRevocationListBuilder() \
-            .issuer_name(x509.Name([ x509.NameAttribute(NameOID.COUNTRY_NAME, "DE"),
-                                     x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "Berlin"),
-                                     x509.NameAttribute(NameOID.LOCALITY_NAME, "Berlin"),
-                                     x509.NameAttribute(NameOID.ORGANIZATION_NAME, "CloudyCube"),
-                                     x509.NameAttribute(NameOID.COMMON_NAME, "Internal CA for VPN") ])) \
-            .last_update(datetime.today()) \
-            .next_update(datetime.today() + timedelta(30,0,0)) \
-            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ski), False) \
-            .sign(private_key = ca_key.to_cryptography_key(), algorithm=hashes.SHA256(), backend=default_backend())
+        ski = ca_cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+        builder = x509.CertificateRevocationListBuilder()
+        builder = builder.issuer_name(ca_subject)
+        builder = builder.last_update(datetime.utcnow())
+        builder = builder.next_update(datetime.utcnow() + ten_years)
+        builder = builder.add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ski), False)
+        ca_crl  = builder.sign(private_key = ca_key, algorithm=hashes.SHA256(), backend=default_backend())
 
         # write everything to disk
         # ---------------------------------------------------------------------
@@ -547,14 +560,22 @@ class CertificateAuthority:
 
             # private key
             with open(self.__ca_key_path, "wb") as f:
-               if password: f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM, ca_key, "aes256", password.encode("utf-8")) )
-               else:        f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM, ca_key))
+                if password:
+                    f.write(ca_key.private_bytes(
+                        encoding = Encoding.PEM,
+                        format = PrivateFormat.TraditionalOpenSSL,
+                        encryption_algorithm = BestAvailableEncryption(password.encode("utf-8"))))
+                else:
+                    f.write(ca_key.private_bytes(
+                        encoding = Encoding.PEM,
+                        format = PrivateFormat.TraditionalOpenSSL,
+                        encryption_algorithm = NoEncryption()))
             os.chown(self.__ca_key_path, 0, 0)
             os.chmod(self.__ca_key_path, S_IRUSR | S_IWUSR)
 
             # certificate
             with open(self.__ca_cert_path, "wb") as f:
-               f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, ca_cert))
+               f.write(ca_cert.public_bytes(Encoding.PEM))
             os.chown(self.__ca_cert_path, 0, 0)
             os.chmod(self.__ca_cert_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
 
@@ -564,12 +585,14 @@ class CertificateAuthority:
             os.chown(self.__ca_cert_path, 0, 0)
             os.chmod(self.__ca_cert_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
 
-            # desired server/client key type
+            # configuration
             config = configparser.ConfigParser()
             config["server"] = {}
             config["server"]["default-key-type"] = server_key_type.lower()
+            config["server"]["subject"] = server_subject_dn
             config["client"] = {}
             config["client"]["default-key-type"] = client_key_type.lower()
+            config["client"]["subject"] = client_subject_dn
             with open(self.__ca_config_path, "w") as configfile:
                 config.write(configfile)
             os.chown(self.__ca_config_path, 0, 0)
@@ -622,7 +645,7 @@ class CertificateAuthority:
                                      False to return None, if the requested certificate does not exist.
 
         Returns:
-            An OpenSSL X509 certificate object;
+            A certificate object;
             None, if the specified certificate does not exist (and raiseIfNotExist is False).
 
         Exceptions:
@@ -647,10 +670,10 @@ class CertificateAuthority:
 
         # try to load the certificate
         with open(cert_path, "rb") as f:
-            cert = crypto.load_certificate(crypto.FILETYPE_PEM, f.read())
+            cert = x509.load_pem_x509_certificate(f.read(), default_backend())
 
         # check sanity
-        if cert.get_serial_number() != serial_number:
+        if cert.serial_number != serial_number:
             raise RuntimeError("Unexpected certificate serial number.")
 
         return cert
@@ -710,18 +733,20 @@ class CertificateAuthority:
 
         # create new CRL and add the revoked certificate to it (the CRL does not expire - or at least nearly 'never' (10 years))
         # (however... strongswan needs to be restarted to reread the CRL!)
-        ski = ca_cert.to_cryptography().extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+        ski = ca_cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
         new_crl = x509.CertificateRevocationListBuilder()
-        new_crl = new_crl.issuer_name(old_crl.issuer) \
-                         .last_update(datetime.today()) \
-                         .next_update(datetime.today() + timedelta(10*365,0,0)) \
-                         .add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ski), False)
+        new_crl = new_crl.issuer_name(old_crl.issuer)
+        new_crl = new_crl.last_update(datetime.utcnow())
+        new_crl = new_crl.next_update(datetime.utcnow() + timedelta(10*365,0,0))
+        new_crl = new_crl.add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ski), False)
         for revoked_cert in old_crl: new_crl = new_crl.add_revoked_certificate(revoked_cert)
-        new_crl = new_crl.add_revoked_certificate(x509.RevokedCertificateBuilder().serial_number(serial_number) \
-                                                                                  .revocation_date(datetime.today()) \
-                                                                                  .add_extension(x509.CRLReason(revoke_reason), False) \
-                                                                                  .build(default_backend())) \
-                         .sign(private_key=ca_key.to_cryptography_key(), algorithm=hashes.SHA256(), backend=default_backend())
+        revoked_cert = x509.RevokedCertificateBuilder()
+        revoked_cert = revoked_cert.serial_number(serial_number)
+        revoked_cert = revoked_cert.revocation_date(datetime.utcnow())
+        revoked_cert = revoked_cert.add_extension(x509.CRLReason(revoke_reason), False)
+        revoked_cert = revoked_cert.build(default_backend())
+        new_crl = new_crl.add_revoked_certificate(revoked_cert)
+        new_crl = new_crl.sign(private_key=ca_key, algorithm=hashes.SHA256(), backend=default_backend())
 
         # write the new CRL into a temporary file
         temp_path = self.__ca_crl_path + ".tmp"
@@ -760,12 +785,12 @@ class CertificateAuthority:
             old_crl = x509.load_pem_x509_crl(f.read(), default_backend())
 
         # create new CRL
-        ski = ca_cert.to_cryptography().extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+        ski = ca_cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
         new_crl = x509.CertificateRevocationListBuilder()
-        new_crl = new_crl.issuer_name(old_crl.issuer) \
-                         .last_update(datetime.today()) \
-                         .next_update(datetime.today() + timedelta(30,0,0)) \
-                         .add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ski), False)
+        new_crl = new_crl.issuer_name(old_crl.issuer)
+        new_crl = new_crl.last_update(datetime.utcnow())
+        new_crl = new_crl.next_update(datetime.utcnow() + timedelta(10*365,0,0))
+        new_crl = new_crl.add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ski), False)
 
         # copy all revoked certificates except the one to remove into the new CRL
         removed = False
@@ -776,7 +801,7 @@ class CertificateAuthority:
             new_crl = new_crl.add_revoked_certificate(revoked_cert)
 
         # sign the new CRL
-        new_crl = new_crl.sign(private_key=ca_key.to_cryptography_key(), algorithm=hashes.SHA256(), backend=default_backend())
+        new_crl = new_crl.sign(private_key=ca_key, algorithm=hashes.SHA256(), backend=default_backend())
 
         # write the new CRL into a temporary file
         temp_path = self.__ca_crl_path + ".tmp"
@@ -800,8 +825,8 @@ class CertificateAuthority:
         Returns:
             A tuple containing the following data:
             - The serial number of the certificate (int)
-            - The client's private key (OpenSSL PKey object)
-            - The client's certificate key (OpenSSL X509 object)
+            - The client's private key (a cryptography key object, exact type depends on the configured key type)
+            - The client's certificate key (cryptography.x509.Certificate)
 
         """
 
@@ -815,12 +840,20 @@ class CertificateAuthority:
         key_type_name = self.config["client"]["default-key-type"]
         key_type = KeyTypes.get_by_name(key_type_name)
         if key_type == None:
-            raise RuntimeError("The configured key type ({0}) is not supported.".format(key_type_name))
+            raise ValueError("The configured key type ({0}) is not supported.".format(key_type_name))
 
         # ensure the the identity is an e-mail address
         # -----------------------------------------------------------------------------------------
         if not is_email_address(identity):
-            raise RuntimeError("The specified identity ({0}) is not an e-mail address.".format(identity))
+            raise ValueError("The specified identity ({0}) is not an e-mail address.".format(identity))
+
+        # build subject DN for the certificate
+        # -----------------------------------------------------------------------------------------
+        subject = CertificateAuthority.build_x509_name(self.config["server"]["subject"])
+        subject = x509.Name([
+            x509.NameAttribute(NameOID.COMMON_NAME, identity),
+            *list(CertificateAuthority.filter(lambda x: x.oid != NameOID.COMMON_NAME, subject))
+        ])
 
         # create directory where generated certificates are stored, if necessary
         # -----------------------------------------------------------------------------------------
@@ -832,57 +865,45 @@ class CertificateAuthority:
 
         # create the client certificate
         # ---------------------------------------------------------------------
-        client_cert = crypto.X509()
-        client_cert.get_subject().C  = "DE"
-        client_cert.get_subject().ST = "Berlin"
-        client_cert.get_subject().L  = "Berlin"
-        client_cert.get_subject().O  = "CloudyCube"
-        client_cert.get_subject().OU = "VPN Clients"
-        client_cert.get_subject().CN = identity
-        client_cert.set_serial_number(self.get_next_serial_number())
-        client_cert.gmtime_adj_notBefore(0)
-        client_cert.gmtime_adj_notAfter(2*365*24*60*60)
-        client_cert.set_issuer(ca_cert.get_subject())
-        client_cert.set_pubkey(client_key)
-        client_cert.add_extensions(
-        [
-            # basicConstraints
-            # -------------------------------------------------------------------------------------
-            crypto.X509Extension(b'basicConstraints', False, b'CA:FALSE'),
-
-            # keyUsage
-            # -------------------------------------------------------------------------------------
-            crypto.X509Extension(b'keyUsage', False, b'digitalSignature, nonRepudiation, keyEncipherment, keyAgreement'),
-
-            # subjectAltName
-            # -------------------------------------------------------------------------------------
-            crypto.X509Extension(b"subjectAltName", False, ("email:" + identity).encode()),
-
-            # extendedKeyUsage
-            # -------------------------------------------------------------------------------------
-            # ikeIntermediate (1.3.6.1.5.5.8.2.2) is required OS X 10.7.3 or older
-            # -------------------------------------------------------------------------------------
-            crypto.X509Extension(b'extendedKeyUsage', False, b'clientAuth, 1.3.6.1.5.5.8.2.2'),
-
-            # subjectKeyIdentifier and authorityKeyIdentifier
-            # -------------------------------------------------------------------------------------
-            crypto.X509Extension(b"subjectKeyIdentifier", False, b"hash", subject = client_cert),
-            crypto.X509Extension(b"authorityKeyIdentifier", False, b"keyid:always", issuer = ca_cert),
-        ])
-
-        client_cert.sign(ca_key, "sha256")
+        public_key = client_key.public_key()
+        builder = x509.CertificateBuilder()
+        builder = builder.subject_name(subject)
+        builder = builder.issuer_name(ca_cert.issuer)
+        builder = builder.serial_number(self.get_next_serial_number())
+        builder = builder.not_valid_before(datetime.utcnow())
+        builder = builder.not_valid_after(datetime.utcnow() + timedelta(2*365, 0, 0))
+        builder = builder.public_key(public_key)
+        builder = builder.add_extension(x509.BasicConstraints(False, None), critical = True)
+        builder = builder.add_extension(x509.KeyUsage(digital_signature  = True,
+                                                      content_commitment = True,  # non repudiation
+                                                      key_encipherment   = True,
+                                                      data_encipherment  = False,
+                                                      key_agreement      = True,
+                                                      key_cert_sign      = False,
+                                                      crl_sign           = False,
+                                                      encipher_only      = False,
+                                                      decipher_only      = False),
+                                        critical = True)
+        builder = builder.add_extension(x509.SubjectAlternativeName([ x509.RFC822Name(identity) ]), critical=False)
+        builder = builder.add_extension(x509.ExtendedKeyUsage([
+            x509.oid.ExtendedKeyUsageOID.CLIENT_AUTH,
+            x509.ObjectIdentifier("1.3.6.1.5.5.8.2.2")    # ikeIntermediate (1.3.6.1.5.5.8.2.2) is required OS X 10.7.3 or older
+        ]), critical=False)
+        builder = builder.add_extension(x509.SubjectKeyIdentifier.from_public_key(public_key), critical=False)
+        builder = builder.add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_cert.public_key()), critical=False)
+        client_cert = builder.sign(private_key=ca_key, algorithm=hashes.SHA256(), backend=default_backend())
 
         # write the client's certificate to the storage directory
         # (private key is not needed for further operations)
         # ---------------------------------------------------------------------
-        base_filename = "{0:010}".format(client_cert.get_serial_number())
+        base_filename = "{0:010}".format(client_cert.serial_number)
         client_cert_path = os.path.join(self.__storage_dir, base_filename + ".crt")
 
         try:
 
             # certificate
             with open(client_cert_path, "wb") as f:
-               f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, client_cert))
+                f.write(client_cert.public_bytes(Encoding.PEM))
             os.chown(client_cert_path, 0, 0)
             os.chmod(client_cert_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
 
@@ -892,7 +913,7 @@ class CertificateAuthority:
             if os.path.exists(client_cert_path): os.remove(client_cert_path)
             raise
 
-        return (client_cert.get_serial_number(), client_key, client_cert)
+        return (client_cert.serial_number, client_key, client_cert)
 
 
     # -------------------------------------------------------------------------------------------------------------------------------------
@@ -903,7 +924,7 @@ class CertificateAuthority:
         Checks whether the specified X509 certificate is a client certificate for the VPN server.
 
         Args:
-            cert (OpenSSL X509 object) : Certificate to check.
+            cert (cryptography.x509.Certificate) : Certificate to check.
 
         Returns:
             True, if the specified certificate is a client certificate;
@@ -911,23 +932,22 @@ class CertificateAuthority:
 
         """
 
-        if not isinstance(cert, crypto.X509):
-            raise RuntimeError("The specified argument is not an OpenSSL X509 object.")
+        if not isinstance(cert, x509.Certificate):
+            raise TypeError("The specified argument is not a x509 certificate object.")
 
-        identity = cert.get_subject().CN
-        if not is_email_address(identity):
+        # check whether the common name (CN) of the subject is an e-mail address
+        cns = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+        if len(cns) != 1: return False
+        if not is_email_address(cns[0].value):
             return False
 
-        # check whether the 'extendedKeyUsage' extension exists and indicates that this is a client certificate
+        # check whether the 'Extended Key Usage' extension exists and indicates that this is a client certificate
         foundExpectedUsage = False
-        for cert_extension_index in range(0, cert.get_extension_count()):
-            extension = cert.get_extension(cert_extension_index)
-            if extension.get_short_name() == b'extendedKeyUsage':
-                cert_usages = [ usage.strip() for usage in str(extension).split(",") ]
-                if "TLS Web Client Authentication" in cert_usages:
+        for extension in cert.extensions:
+            if extension.oid == x509.ExtendedKeyUsage.oid:
+                if x509.oid.ExtendedKeyUsageOID.CLIENT_AUTH in extension.value:
                     foundExpectedUsage = True
                     break
-
         if not foundExpectedUsage:
             return False
 
@@ -937,16 +957,17 @@ class CertificateAuthority:
     # -------------------------------------------------------------------------------------------------------------------------------------
 
 
-    def get_vpn_client_certificates(self, include_expired = True, include_revoked = True):
+    def get_vpn_client_certificates(self, identity = None, include_expired = True, include_revoked = True):
         """
         Gets a list of client certificates the CA has generated for VPN clients.
 
         Args:
+            identity (str)         : Identity of the client whose certificates are to get (None to get certificates of all users).
             include_expired (bool) : True to return expired certificates as well; otherwise False.
             include_revoked (bool) : True to return revoked certificates as well; otherwise False.
 
         Returns:
-            A list of OpenSSL X509 objects.
+            A list of cryptography.x509.Certificate objects.
 
         """
 
@@ -961,25 +982,30 @@ class CertificateAuthority:
         for cert_path in files:
 
             # load certificate
-            with open(cert_path, "rb") as f: cert = f.read()
-            cert = crypto.load_certificate(crypto.FILETYPE_PEM, cert)
+            with open(cert_path, "rb") as f:
+                cert = x509.load_pem_x509_certificate(f.read(), default_backend())
 
             # skip, if the certificate isn't a client certificate
             if not self.is_vpn_client_certificate(cert):
                 continue
 
+            # skip, if the identity is not the requested one
+            if identity:
+                cns = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+                if len(cns) != 1: continue
+                if cns[0].value.lower() != identity.lower(): continue
+
             # skip, if the certificate has expired (if requested)
-            if cert.has_expired() and not show_expired:
+            if datetime.utcnow() > cert.not_valid_after and not include_expired:
                 continue
 
             # check whether the certificate has been revoked
-            revoked = crl.get_revoked()
             cert_revoked = False
-            if revoked:
-                for x in revoked:
-                    if cert.get_serial_number() == int(x.get_serial(), 16):
-                        cert_revoked = True
-                        break
+            for revocation in crl:
+                if cert.serial_number == revocation.serial_number:
+                    cert_revoked = True
+                    break
+
             if cert_revoked and not include_revoked:
                 continue
 
@@ -987,7 +1013,7 @@ class CertificateAuthority:
 
         return client_certs
 
- 
+
     # -------------------------------------------------------------------------------------------------------------------------------------
 
 
@@ -997,14 +1023,14 @@ class CertificateAuthority:
         A key is created as well, if it is not specified explicitly.
 
         Args:
-            vpn_hostnames (list)             : Hostnames and IP addresses the VPN server will be reachable via.
-                                               Please prefix hostnames with 'DNS:' and IP addresses with 'IP:'
-                                               The first hostname/IP address in the list is put into the Common Name(CN) of the certificate.
-                                               All hostnames/IP addresses are put into the X.509 'subjectAltName' extension.
-            server_key (OpenSSL PKey object) : The key of the Server to create the certificate with (None to create a new key)
+            vpn_hostnames (list)                 : Hostnames and IP addresses the VPN server will be reachable via.
+                                                   Please prefix hostnames with 'DNS:' and IP addresses with 'IP:'
+                                                   The first hostname/IP address in the list is put into the Common Name(CN) of the certificate.
+                                                   All hostnames/IP addresses are put into the X.509 'subjectAltName' extension.
+            server_key (cryptography key object) : The key of the Server to create the certificate with (None to create a new key)
 
         Returns:
-            A tuple containing the key (OpenSSL PKey object) and the certificate (OpenSSL X509 object) of the VPN server.
+            A tuple containing the key (cryptography key object) and the certificate (cryptography.x509.Certificate object) of the VPN server.
 
         """
 
@@ -1018,7 +1044,15 @@ class CertificateAuthority:
         key_type_name = self.config["server"]["default-key-type"]
         key_type = KeyTypes.get_by_name(key_type_name)
         if key_type == None:
-            raise RuntimeError("The configured key type ({0}) is not supported.".format(key_type_name))
+            raise ValueError("The configured key type ({0}) is not supported.".format(key_type_name))
+
+        # build subject DN for the certificate
+        # -----------------------------------------------------------------------------------------
+        subject = CertificateAuthority.build_x509_name(self.config["server"]["subject"])
+        subject = x509.Name([
+            x509.NameAttribute(NameOID.COMMON_NAME, vpn_hostnames[0].split(":", 1)[1]),
+            *list(CertificateAuthority.filter(lambda x: x.oid != NameOID.COMMON_NAME, subject))
+        ])
 
         # create directory where the key/certificate is stored, if necessary
         # ---------------------------------------------------------------------
@@ -1031,51 +1065,50 @@ class CertificateAuthority:
 
         # create the certificate of the server
         # ---------------------------------------------------------------------
-        server_cert = crypto.X509()
-        server_cert.get_subject().C  = "DE"
-        server_cert.get_subject().ST = "Berlin"
-        server_cert.get_subject().L  = "Berlin"
-        server_cert.get_subject().O  = "CloudyCube"
-        server_cert.get_subject().OU = "VPN Provider"
-        server_cert.get_subject().CN = ":".join(vpn_hostnames[0].split(":")[1:]) # strips the "DNS:" or "IP:" prefixes
-        server_cert.set_serial_number(self.get_next_serial_number())
-        server_cert.gmtime_adj_notBefore(0)
-        server_cert.gmtime_adj_notAfter(2*365*24*60*60)
-        server_cert.set_issuer(ca_cert.get_subject())
-        server_cert.set_pubkey(server_key)
-        server_cert.add_extensions(
-        [
-            # basicConstraints
-            # -------------------------------------------------------------------------------------
-            crypto.X509Extension(b'basicConstraints', False, b'CA:FALSE'),
+        public_key = server_key.public_key()
+        builder = x509.CertificateBuilder()
+        builder = builder.subject_name(subject)
+        builder = builder.issuer_name(ca_cert.issuer)
+        builder = builder.serial_number(self.get_next_serial_number())
+        builder = builder.not_valid_before(datetime.utcnow())
+        builder = builder.not_valid_after(datetime.utcnow() + timedelta(2*365, 0, 0))
+        builder = builder.public_key(public_key)
+        builder = builder.add_extension(x509.BasicConstraints(False, None), critical = True)
+        builder = builder.add_extension(x509.KeyUsage(digital_signature  = True,
+                                                      content_commitment = True,  # non repudiation
+                                                      key_encipherment   = True,
+                                                      data_encipherment  = False,
+                                                      key_agreement      = True,
+                                                      key_cert_sign      = False,
+                                                      crl_sign           = False,
+                                                      encipher_only      = False,
+                                                      decipher_only      = False),
+                                        critical = True)
 
-            # keyUsage
-            # -------------------------------------------------------------------------------------
-            crypto.X509Extension(b'keyUsage', False, b'digitalSignature, nonRepudiation, keyEncipherment, keyAgreement'),
 
-            # subjectAltName
-            # -------------------------------------------------------------------------------------
-            crypto.X509Extension(b"subjectAltName", False, ", ".join(vpn_hostnames).encode()),
+        # add 'Subject Alternative Name' extension
+        builder = builder.add_extension(CertificateAuthority.build_san(vpn_hostnames), critical=False)
 
-            # extendedKeyUsage
-            # -------------------------------------------------------------------------------------
-            # serverAuth (1.3.6.1.5.5.7.3.1) is required by the built-in Windows 7 VPN client
-            # ikeIntermediate (1.3.6.1.5.5.8.2.2) is required OS X 10.7.3 or older
-            # -------------------------------------------------------------------------------------
-            crypto.X509Extension(b'extendedKeyUsage', False, b'serverAuth, 1.3.6.1.5.5.8.2.2'),
+        # add 'Extended Key Usage' extension
+        builder = builder.add_extension(x509.ExtendedKeyUsage([
+                                            x509.oid.ExtendedKeyUsageOID.SERVER_AUTH,
+                                            x509.ObjectIdentifier("1.3.6.1.5.5.8.2.2")    # ikeIntermediate (1.3.6.1.5.5.8.2.2) is required OS X 10.7.3 or older
+                                        ]), critical=False)
 
-            # subjectKeyIdentifier and authorityKeyIdentifier
-            # -------------------------------------------------------------------------------------
-            crypto.X509Extension(b"subjectKeyIdentifier", False, b"hash", subject = server_cert),
-            crypto.X509Extension(b"authorityKeyIdentifier", False, b"keyid:always", issuer = ca_cert),
-        ])
-        server_cert.sign(ca_key, "sha256")
+        # add 'Subject Key Identifier' extension
+        builder = builder.add_extension(x509.SubjectKeyIdentifier.from_public_key(public_key), critical=False)
+
+        # add 'Authority Key Identifier' extension
+        builder = builder.add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_cert.public_key()), critical=False)
+
+        # sign the certificate
+        server_cert = builder.sign(private_key=ca_key, algorithm=hashes.SHA256(), backend=default_backend())
 
         # write certificate file
-        base_filename = "{0:010}".format(server_cert.get_serial_number())
+        base_filename = "{0:010}".format(server_cert.serial_number)
         server_cert_path = os.path.join(self.__storage_dir, base_filename + ".crt")
         with open(server_cert_path, "wb") as f:
-            f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, server_cert))
+            f.write(server_cert.public_bytes(Encoding.PEM))
         os.chown(server_cert_path, 0, 0)
         os.chmod(server_cert_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
 
@@ -1103,10 +1136,76 @@ class CertificateAuthority:
                 f.write(str(next+1))
                 return next
         else:
-            next = 0
+            next = 1
             with open(self.__ca_next_cert_serial_path, "wt+") as f:
                 f.write("{0}".format(next+1))
             return next
+
+    @classmethod
+    def filter(cls, pred, items):
+        """
+        A generator applying a predicate to filter elements.
+        """
+        for elem in items:
+            if pred(elem):
+                yield elem
+
+
+    @classmethod
+    def build_x509_name(cls, dn):
+        """
+        Builds a X.509 name (as used by the cryptography module) from a distinguished name (DN).
+
+        Args:
+            dn (str) : DN to create the X.509 name from.
+
+        Returns:
+            The X.509 name corresponding to the specified DN.
+
+        """
+        name_attributes = []
+        for part in CertificateAuthority.split_dn(dn):
+            type = part[0].upper()
+            if   type == "CN":              name_attributes.append(x509.NameAttribute(NameOID.COMMON_NAME, part[1]))
+            elif type == "C":               name_attributes.append(x509.NameAttribute(NameOID.COUNTRY_NAME, part[1]))
+            elif type == "L":               name_attributes.append(x509.NameAttribute(NameOID.LOCALITY_NAME, part[1]))
+            elif type == "O":               name_attributes.append(x509.NameAttribute(NameOID.ORGANIZATION_NAME, part[1]))
+            elif type == "OU":              name_attributes.append(x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, part[1]))
+            elif type == "ST":              name_attributes.append(x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, part[1]))
+            else: raise ValueError("Unknown attribute type ({0}).".format(part[0]))
+        return x509.Name(name_attributes)
+
+    @classmethod
+    def split_dn(cls, dn):
+        """
+        Splits the specified distinguished name (DN) into the attributes it consists of.
+
+        Args:
+            dn (str) : DN to split.
+
+        """
+        attributes = re.split(r"(?!\\),", dn)                           # split DN into attributes
+        attributes = [re.split(r"(?!\\)=", x, 1) for x in attributes]   # split DN attributes into type and value
+        attributes = [[y.strip() for y in x] for x in attributes]       # trim whitespaces at start and end of attribute types/values
+        dn_ok = all([len(x) == 2 for x in attributes])
+        if not dn_ok: raise ValueError("The specified DN is not valid.")
+        return attributes
+
+
+    @classmethod
+    def build_san(cls, hostnames):
+        subjectAlternativeNames = []
+        for name in hostnames:
+            tokens = name.split(":", 1)
+            if len(tokens) < 2: raise ValueError("Missing 'DNS:' before hostname or 'IP:' befire IP address.")
+            type = tokens[0].lower()
+            if type == "dns":
+                subjectAlternativeNames.append(x509.DNSName(tokens[1]))
+            elif type == "ip":
+                subjectAlternativeNames.append(x509.IPAddress(ip_address(tokens[1])))
+            else:
+                raise ValueError("Invalid prefix ({0}:), expecting 'DNS:' before hostname or 'IP:' before IP address.".format(tokens[0]))
+        return x509.SubjectAlternativeName(subjectAlternativeNames)
 
 
 

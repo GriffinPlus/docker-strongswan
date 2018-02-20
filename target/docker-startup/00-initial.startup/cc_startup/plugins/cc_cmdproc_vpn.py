@@ -11,6 +11,7 @@ import sys
 
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption, load_pem_private_key
 from cryptography.x509.oid import NameOID
 from datetime import datetime, timedelta
@@ -856,6 +857,7 @@ class VpnCommandProcessor(CommandProcessor):
         template_context = {
           "ca_cert_path"                   : self.__ca_cert_path,
           "ca_crl_path"                    : self.__ca_crl_path,
+          "server_key_type"                : self.__server_private_key_type,   # rsa, ec
           "server_key_path"                : self.__server_key_path,
           "server_cert_path"               : self.__server_cert_path,
           "dns_servers"                    : self.__dns_servers,
@@ -1251,8 +1253,8 @@ class VpnCommandProcessor(CommandProcessor):
 
             Log.write_note("Found external server key and certificate to use for server authentication.")
 
-            self._server_key_path  = EXTERNAL_PKI_SERVER_KEY_FILE
-            self._server_cert_path = EXTERNAL_PKI_SERVER_CERT_FILE
+            self.__server_key_path  = EXTERNAL_PKI_SERVER_KEY_FILE
+            self.__server_cert_path = EXTERNAL_PKI_SERVER_CERT_FILE
 
         else:
 
@@ -1349,9 +1351,19 @@ class VpnCommandProcessor(CommandProcessor):
 
                 Log.write_info("The stored server certificate is valid and can be used as is.")
 
-
             self.__server_key_path  = INTERNAL_PKI_SERVER_KEY_FILE
             self.__server_cert_path = INTERNAL_PKI_SERVER_CERT_FILE
+
+        # determine the type of the server's private key
+        with open(INTERNAL_PKI_SERVER_KEY_FILE, "rb") as f:
+            key = load_pem_private_key(f.read(), None, default_backend())
+            print(key)
+            if isinstance(key, rsa.RSAPrivateKey):
+                self.__server_private_key_type = "rsa"
+            elif isinstance(key, ec.EllipticCurvePrivateKey):
+                self.__server_private_key_type = "ec"
+            else:
+                raise RuntimeError("Server key is of unhandled type.")
 
         # log the certificate of the VPN server
         dump = crypto.dump_certificate(crypto.FILETYPE_TEXT, crypto.X509.from_cryptography(server_cert)).decode('utf-8')
@@ -1411,7 +1423,7 @@ class VpnCommandProcessor(CommandProcessor):
         elif type(error) is cc_ca.PasswordRequiredError:
             Log.write_error(error.message)
             if not Log.uses_stdio: print_error(error.message)
-            return EXIT_CODE_PASSWORD_REQUIRED 
+            return EXIT_CODE_PASSWORD_REQUIRED
         elif type(error) is cc_ca.InvalidPasswordError:
             Log.write_error(error.message)
             if not Log.uses_stdio: print_error(error.message)

@@ -214,9 +214,6 @@ class VpnCommandProcessor(CommandProcessor):
                                                                      - 'rsa2048'   : RSA, 2048 bit
                                                                      - 'rsa3072'   : RSA, 3072 bit
                                                                      - 'rsa4096'   : RSA, 4096 bit
-                                                                     - 'secp192r1' : ECC, SECG curve over a 192 bit prime field
-                                                                     - 'secp224r1' : ECC, NIST/SECG curve over a 224 bit prime field
-                                                                     - 'secp256k1' : ECC, SECG curve over a 256 bit prime field
                                                                      - 'secp256r1' : ECC, NIST/SECG curve over a 256 bit prime field
                                                                      - 'secp384r1' : ECC, NIST/SECG curve over a 384 bit prime field
                                                                      - 'secp521r1' : ECC, NIST/SECG curve over a 521 bit prime field

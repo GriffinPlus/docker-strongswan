@@ -192,9 +192,6 @@ class KeyTypes:
     rsa2048   = KeyType("rsa2048", "RSA, 2048 bit",                                                             lambda: rsa.generate_private_key(65537, 2048, default_backend()))
     rsa3072   = KeyType("rsa3072", "RSA, 3072 bit",                                                             lambda: rsa.generate_private_key(65537, 3072, default_backend()))
     rsa4096   = KeyType("rsa4096", "RSA, 4096 bit",                                                             lambda: rsa.generate_private_key(65537, 4096, default_backend()))
-    secp192r1 = KeyType("secp192r1", "ECC, SECG curve over a 192 bit prime field (aka P-192, prime192v1)",      lambda: ec.generate_private_key(ec.SECP192R1, default_backend()))
-    secp224r1 = KeyType("secp224r1", "ECC, NIST/SECG curve over a 224 bit prime field",                         lambda: ec.generate_private_key(ec.SECP224R1, default_backend()))
-    secp256k1 = KeyType("secp256k1", "ECC, SECG curve over a 256 bit prime field",                              lambda: ec.generate_private_key(ec.SECP256K1, default_backend()))
     secp256r1 = KeyType("secp256r1", "ECC, NIST/SECG curve over a 256 bit prime field (aka P-256, prime256v1)", lambda: ec.generate_private_key(ec.SECP256R1, default_backend()))
     secp384r1 = KeyType("secp384r1", "ECC, NIST/SECG curve over a 384 bit prime field (aka P-384)",             lambda: ec.generate_private_key(ec.SECP384R1, default_backend()))
     secp521r1 = KeyType("secp521r1", "ECC, NIST/SECG curve over a 521 bit prime field (aka P-521)",             lambda: ec.generate_private_key(ec.SECP521R1, default_backend()))
@@ -212,9 +209,6 @@ class KeyTypes:
         yield KeyTypes.rsa2048
         yield KeyTypes.rsa3072
         yield KeyTypes.rsa4096
-        yield KeyTypes.secp192r1
-        yield KeyTypes.secp224r1
-        yield KeyTypes.secp256k1
         yield KeyTypes.secp256r1
         yield KeyTypes.secp384r1
         yield KeyTypes.secp521r1

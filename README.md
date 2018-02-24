@@ -105,7 +105,10 @@ docker run -it \
   init \
   --ca-key-type=<key-type> \
   --server-key-type=<key-type> \
-  --client-key-type=<key-type>
+  --client-key-type=<key-type> \
+  --ca-cert-subject=<subject-dn> \
+  --server-cert-subject=<subject-dn> \
+  --client-cert-subject=<subject-dn>
 ```
 
 The internal CA can be initialized using the `--ca-pass` command line parameter or *stdin* to feed in the password as well. Using *stdin* is the recommended way as the password cannot leak via process lists or docker's inspection features:

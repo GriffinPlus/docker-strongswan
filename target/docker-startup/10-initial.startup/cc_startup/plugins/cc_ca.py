@@ -924,17 +924,17 @@ class CertificateAuthority:
                                                       encipher_only      = False,
                                                       decipher_only      = False),
                                         critical = True)
-        upn = identity.encode("utf-8")
-        if len(upn) > 127: raise RuntimeError("Identity is too long (> 127 bytes).")
-        upn = b"\x0c" + bytes([len(upn)]) + upn
+#        upn = identity.encode("utf-8")
+#        if len(upn) > 127: raise RuntimeError("Identity is too long (> 127 bytes).")
+#        upn = b"\x0c" + bytes([len(upn)]) + upn
         builder = builder.add_extension(x509.SubjectAlternativeName([
             x509.RFC822Name(identity),                                            # e-mail
-            x509.OtherName(x509.ObjectIdentifier("1.3.6.1.4.1.311.20.2.3"), upn)  # User Principal Name (UPN), needed for Windows 10 VPN client with smart card
+#            x509.OtherName(x509.ObjectIdentifier("1.3.6.1.4.1.311.20.2.3"), upn)  # User Principal Name (UPN), needed for Windows 10 VPN client with smart card
         ]), critical=False)
         builder = builder.add_extension(x509.ExtendedKeyUsage([
             x509.oid.ExtendedKeyUsageOID.CLIENT_AUTH,
             x509.ObjectIdentifier("1.3.6.1.5.5.8.2.2"),      # ikeIntermediate (1.3.6.1.5.5.8.2.2) is required for OS X 10.7.3 or older
-            x509.ObjectIdentifier("1.3.6.1.4.1.311.20.2.2")  # Smart Card Logon (1.3.6.1.4.1.311.20.2.2)
+#            x509.ObjectIdentifier("1.3.6.1.4.1.311.20.2.2")  # Smart Card Logon (1.3.6.1.4.1.311.20.2.2)
         ]), critical=False)
         builder = builder.add_extension(x509.SubjectKeyIdentifier.from_public_key(public_key), critical=False)
         builder = builder.add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_cert.public_key()), critical=False)

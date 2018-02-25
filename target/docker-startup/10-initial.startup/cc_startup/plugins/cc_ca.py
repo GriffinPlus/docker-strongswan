@@ -186,15 +186,57 @@ class KeyType:
         key = self.factory()
         return key
 
+    @classmethod
+    def get_recommended_signature_hash(cls, key):
+        """
+        Gets the recommended hash to use when creating the signature of a x.509 certificate.
+
+        Args:
+            key (obj) : Key object to get the appropriate hash for.
+
+        Returns:
+            Hash algorithm to use for creating the signature.
+
+        """
+        if isinstance(key, rsa.RSAPrivateKey):
+            if key.key_size >= 4096:   return hashes.SHA512()
+            elif key.key_size >= 3072: return hashes.SHA384()
+            else:                      return hashes.SHA256()
+        elif isinstance(key, ec.EllipticCurvePrivateKey):
+            if key.key_size >= 521:    return hashes.SHA512()
+            elif key.key_size >= 384:  return hashes.SHA384()
+            else:                      return hashes.SHA256()
+        else:
+            raise RuntimeError("Key ({0}) is of unhandled type.".format(key))
+
+
+
 
 class KeyTypes:
 
-    rsa2048   = KeyType("rsa2048", "RSA, 2048 bit",                                                             lambda: rsa.generate_private_key(65537, 2048, default_backend()))
-    rsa3072   = KeyType("rsa3072", "RSA, 3072 bit",                                                             lambda: rsa.generate_private_key(65537, 3072, default_backend()))
-    rsa4096   = KeyType("rsa4096", "RSA, 4096 bit",                                                             lambda: rsa.generate_private_key(65537, 4096, default_backend()))
-    secp256r1 = KeyType("secp256r1", "ECC, NIST/SECG curve over a 256 bit prime field (aka P-256, prime256v1)", lambda: ec.generate_private_key(ec.SECP256R1, default_backend()))
-    secp384r1 = KeyType("secp384r1", "ECC, NIST/SECG curve over a 384 bit prime field (aka P-384)",             lambda: ec.generate_private_key(ec.SECP384R1, default_backend()))
-    secp521r1 = KeyType("secp521r1", "ECC, NIST/SECG curve over a 521 bit prime field (aka P-521)",             lambda: ec.generate_private_key(ec.SECP521R1, default_backend()))
+    rsa2048   = KeyType("rsa2048",
+                        "RSA, 2048 bit",
+                        lambda: rsa.generate_private_key(65537, 2048, default_backend()))
+
+    rsa3072   = KeyType("rsa3072",
+                        "RSA, 3072 bit",
+                        lambda: rsa.generate_private_key(65537, 3072, default_backend()))
+
+    rsa4096   = KeyType("rsa4096",
+                        "RSA, 4096 bit",
+                        lambda: rsa.generate_private_key(65537, 4096, default_backend()))
+
+    secp256r1 = KeyType("secp256r1",
+                        "ECC, NIST/SECG curve over a 256 bit prime field (aka P-256, prime256v1)",
+                        lambda: ec.generate_private_key(ec.SECP256R1, default_backend()))
+
+    secp384r1 = KeyType("secp384r1",
+                        "ECC, NIST/SECG curve over a 384 bit prime field (aka P-384)",
+                        lambda: ec.generate_private_key(ec.SECP384R1, default_backend()))
+
+    secp521r1 = KeyType("secp521r1",
+                        "ECC, NIST/SECG curve over a 521 bit prime field (aka P-521)",
+                        lambda: ec.generate_private_key(ec.SECP521R1, default_backend()))
 
     @classmethod
     def get_by_name(cls, name):
@@ -511,6 +553,7 @@ class CertificateAuthority:
         # create the CA's private key
         # ---------------------------------------------------------------------
         ca_key = KeyTypes.get_by_name(ca_key_type).create_key()
+        hash = KeyType.get_recommended_signature_hash(ca_key)
 
         # create the CA's certificate
         # ---------------------------------------------------------------------
@@ -536,7 +579,7 @@ class CertificateAuthority:
                                         critical = True)
         builder = builder.add_extension(x509.SubjectKeyIdentifier.from_public_key(public_key), critical = False)
         builder = builder.add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(public_key), critical = False)
-        ca_cert = builder.sign(private_key=ca_key, algorithm=hashes.SHA256(), backend=default_backend())
+        ca_cert = builder.sign(private_key=ca_key, algorithm=hash, backend=default_backend())
 
         # create the CRL
         # ---------------------------------------------------------------------
@@ -546,7 +589,7 @@ class CertificateAuthority:
         builder = builder.last_update(datetime.utcnow())
         builder = builder.next_update(datetime.utcnow() + ten_years)
         builder = builder.add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ski), False)
-        ca_crl  = builder.sign(private_key = ca_key, algorithm=hashes.SHA256(), backend=default_backend())
+        ca_crl  = builder.sign(private_key = ca_key, algorithm=hash, backend=default_backend())
 
         # write everything to disk
         # ---------------------------------------------------------------------
@@ -720,6 +763,7 @@ class CertificateAuthority:
         # get the key and the certificate of the CA
         ca_key = self.key
         ca_cert = self.cert
+        hash = KeyType.get_recommended_signature_hash(ca_key)
 
         # load the old CRL
         with open(self.__ca_crl_path, "rb") as f:
@@ -740,7 +784,7 @@ class CertificateAuthority:
         revoked_cert = revoked_cert.add_extension(x509.CRLReason(revoke_reason), False)
         revoked_cert = revoked_cert.build(default_backend())
         new_crl = new_crl.add_revoked_certificate(revoked_cert)
-        new_crl = new_crl.sign(private_key=ca_key, algorithm=hashes.SHA256(), backend=default_backend())
+        new_crl = new_crl.sign(private_key=ca_key, algorithm=hash, backend=default_backend())
 
         # write the new CRL into a temporary file
         temp_path = self.__ca_crl_path + ".tmp"
@@ -773,6 +817,7 @@ class CertificateAuthority:
         # get the key and the certificate of the CA
         ca_key = self.key
         ca_cert = self.cert
+        hash = KeyType.get_recommended_signature_hash(ca_key)
 
         # load the old CRL
         with open(self.__ca_crl_path, "rb") as f:
@@ -795,7 +840,7 @@ class CertificateAuthority:
             new_crl = new_crl.add_revoked_certificate(revoked_cert)
 
         # sign the new CRL
-        new_crl = new_crl.sign(private_key=ca_key, algorithm=hashes.SHA256(), backend=default_backend())
+        new_crl = new_crl.sign(private_key=ca_key, algorithm=hash, backend=default_backend())
 
         # write the new CRL into a temporary file
         temp_path = self.__ca_crl_path + ".tmp"
@@ -828,6 +873,7 @@ class CertificateAuthority:
         # -----------------------------------------------------------------------------------------
         ca_key = self.key
         ca_cert = self.cert
+        hash = KeyType.get_recommended_signature_hash(ca_key)
 
         # retrieve key type to use
         # -----------------------------------------------------------------------------------------
@@ -878,14 +924,21 @@ class CertificateAuthority:
                                                       encipher_only      = False,
                                                       decipher_only      = False),
                                         critical = True)
-        builder = builder.add_extension(x509.SubjectAlternativeName([ x509.RFC822Name(identity) ]), critical=False)
+        upn = identity.encode("utf-8")
+        if len(upn) > 127: raise RuntimeError("Identity is too long (> 127 bytes).")
+        upn = b"\x0c" + bytes([len(upn)]) + upn
+        builder = builder.add_extension(x509.SubjectAlternativeName([
+            x509.RFC822Name(identity),                                            # e-mail
+            x509.OtherName(x509.ObjectIdentifier("1.3.6.1.4.1.311.20.2.3"), upn)  # User Principal Name (UPN), needed for Windows 10 VPN client with smart card
+        ]), critical=False)
         builder = builder.add_extension(x509.ExtendedKeyUsage([
             x509.oid.ExtendedKeyUsageOID.CLIENT_AUTH,
-            x509.ObjectIdentifier("1.3.6.1.5.5.8.2.2")    # ikeIntermediate (1.3.6.1.5.5.8.2.2) is required OS X 10.7.3 or older
+            x509.ObjectIdentifier("1.3.6.1.5.5.8.2.2"),      # ikeIntermediate (1.3.6.1.5.5.8.2.2) is required for OS X 10.7.3 or older
+            x509.ObjectIdentifier("1.3.6.1.4.1.311.20.2.2")  # Smart Card Logon (1.3.6.1.4.1.311.20.2.2)
         ]), critical=False)
         builder = builder.add_extension(x509.SubjectKeyIdentifier.from_public_key(public_key), critical=False)
         builder = builder.add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_cert.public_key()), critical=False)
-        client_cert = builder.sign(private_key=ca_key, algorithm=hashes.SHA256(), backend=default_backend())
+        client_cert = builder.sign(private_key=ca_key, algorithm=hash, backend=default_backend())
 
         # write the client's certificate to the storage directory
         # (private key is not needed for further operations)
@@ -1032,6 +1085,7 @@ class CertificateAuthority:
         # -----------------------------------------------------------------------------------------
         ca_key = self.key
         ca_cert = self.cert
+        hash = KeyType.get_recommended_signature_hash(ca_key)
 
         # retrieve key type to use
         # -----------------------------------------------------------------------------------------
@@ -1096,7 +1150,7 @@ class CertificateAuthority:
         builder = builder.add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_cert.public_key()), critical=False)
 
         # sign the certificate
-        server_cert = builder.sign(private_key=ca_key, algorithm=hashes.SHA256(), backend=default_backend())
+        server_cert = builder.sign(private_key=ca_key, algorithm=hash, backend=default_backend())
 
         # write certificate file
         base_filename = "{0:010}".format(server_cert.serial_number)

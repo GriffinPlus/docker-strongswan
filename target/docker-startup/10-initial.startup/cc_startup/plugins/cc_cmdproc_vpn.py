@@ -1354,7 +1354,6 @@ class VpnCommandProcessor(CommandProcessor):
         # determine the type of the server's private key
         with open(INTERNAL_PKI_SERVER_KEY_FILE, "rb") as f:
             key = load_pem_private_key(f.read(), None, default_backend())
-            print(key)
             if isinstance(key, rsa.RSAPrivateKey):
                 self.__server_private_key_type = "rsa"
             elif isinstance(key, ec.EllipticCurvePrivateKey):

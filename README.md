@@ -1,7 +1,3 @@
-# UNDER DEVELOPMENT - ***DO NOT USE IN PRODUCTION***
-
----------------------------------------------------------------------------
-
 # Docker Image with StrongSwan
 
 [![Build Status](https://travis-ci.org/cloudycube/docker-strongswan.svg?branch=master)](https://travis-ci.org/cloudycube/docker-strongswan) [![Docker 
@@ -437,15 +433,15 @@ PS C:\> Add-VpnConnection -Name "My-VPN-Connection" -ServerAddress "vpn.my-domai
 At this point you should be able to connect to the *strongswan* container with default settings. You can dig a bit deeper and select more secure or faster ciphers, if you want. I recommend using AES-128-GCM. It is both a secure and fast choice, since AES in Galois/Counter Mode (GCM) is an *Authenticated Encryption with Associated Data (AEAD)* algorithm that ensures both confidentiality and authenticity at the same time eliminating the need for a separate integrity algorithm. The following Powershell snippet will set it up. Don't get confused by the `-IntegrityCheckMethod` parameter, it is required for the cmdlet, but ignored in GCM mode. The snippet will furthermore configure the Diffie Hellman Group used for IKE key exchanges (`-DHGroup`) and the *Perfect Forward Secrecy (PFS)* Group (`-PfsGroup`) in the IPSec policy. Details concerning the `Set-VpnConnectionIPSecConfiguration` function can be found [here](https://technet.microsoft.com/de-de/library/dn262642(v=wps.630).aspx):
 
 ```
-PS C:\> Set-VpnConnectionIPsecConfiguration \
-           -ConnectionName "My-VPN-Connection" \
-           -AuthenticationTransformConstants GCMAES128 \
-           -CipherTransformConstants GCMAES128 \
-           -EncryptionMethod GCMAES128 \
-           -IntegrityCheckMethod SHA384 \
-           -PfsGroup ECP384 \
-           -DHGroup ECP384 \
-           -PassThru \
+PS C:\> Set-VpnConnectionIPsecConfiguration `
+           -ConnectionName "My-VPN-Connection" `
+           -AuthenticationTransformConstants GCMAES128 `
+           -CipherTransformConstants GCMAES128 `
+           -EncryptionMethod GCMAES128 `
+           -IntegrityCheckMethod SHA384 `
+           -PfsGroup ECP384 `
+           -DHGroup ECP384 `
+           -PassThru `
            -Force
 ```
 

@@ -1,14 +1,14 @@
 # Docker Image with StrongSwan
 
-[![Build Status](https://travis-ci.org/cloudycube/docker-strongswan.svg?branch=master)](https://travis-ci.org/cloudycube/docker-strongswan) [![Docker 
-Pulls](https://img.shields.io/docker/pulls/cloudycube/strongswan.svg)](https://hub.docker.com/r/cloudycube/strongswan) [![Github 
-Stars](https://img.shields.io/github/stars/cloudycube/docker-strongswan.svg?label=github%20%E2%98%85)](https://github.com/cloudycube/docker-strongswan) [![Github 
-Stars](https://img.shields.io/github/contributors/cloudycube/docker-strongswan.svg)](https://github.com/cloudycube/docker-strongswan) [![Github 
-Forks](https://img.shields.io/github/forks/cloudycube/docker-strongswan.svg?label=github%20forks)](https://github.com/cloudycube/docker-strongswan)
+[![Build Status](https://travis-ci.org/GriffinPlus/docker-strongswan.svg?branch=master)](https://travis-ci.org/GriffinPlus/docker-strongswan) [![Docker 
+Pulls](https://img.shields.io/docker/pulls/GriffinPlus/strongswan.svg)](https://hub.docker.com/r/GriffinPlus/strongswan) [![Github 
+Stars](https://img.shields.io/github/stars/GriffinPlus/docker-strongswan.svg?label=github%20%E2%98%85)](https://github.com/GriffinPlus/docker-strongswan) [![Github 
+Stars](https://img.shields.io/github/contributors/GriffinPlus/docker-strongswan.svg)](https://github.com/GriffinPlus/docker-strongswan) [![Github 
+Forks](https://img.shields.io/github/forks/GriffinPlus/docker-strongswan.svg?label=github%20forks)](https://github.com/GriffinPlus/docker-strongswan)
 
 
 ## Overview
-This is a Docker image deriving from the [base-supervisor](https://github.com/cloudycube/docker-base-supervisor) image. It adds the popular VPN software [StrongSwan](https://www.strongswan.org/) that allows you to create a VPN tunnel from common IKEv2 capable IPSec VPN clients right into your Docker stack. It can be useful, if you want to access your services remotely, but don't want your services (especially administration panels) to be visible on the public internet. This greatly reduces attack vectors malicious people can use to gain access to your system.
+This is a Docker image deriving from the [base-supervisor](https://github.com/griffinplus/docker-base-supervisor) image. It adds the popular VPN software [StrongSwan](https://www.strongswan.org/) that allows you to create a VPN tunnel from common IKEv2 capable IPSec VPN clients right into your Docker stack. It can be useful, if you want to access your services remotely, but don't want your services (especially administration panels) to be visible on the public internet. This greatly reduces attack vectors malicious people can use to gain access to your system.
 
 The image provides the following features:
 - StrongSwan Version 5.6.1
@@ -35,8 +35,6 @@ The image provides the following features:
 - Tested Clients
   - Windows 10 Integrated VPN Client (Desktop)
   - Android [StrongSwan App](https://play.google.com/store/apps/details?id=org.strongswan.android)
-
-This image belongs to a set of Docker images created for project [CloudyCube](https://www.falk-online.eu/projekte/cloudycube). The homepage is in German only, but you will find everything needed to get it working here as well.
 
 ## Usage
 
@@ -97,7 +95,7 @@ The internal CA can be set up interactively using the following command. You wil
 ```
 docker run -it \
   -v strongswan-data:/data \
-  cloudycube/strongswan \
+  griffinplus/strongswan \
   init \
   --ca-key-type=<key-type> \
   --server-key-type=<key-type> \
@@ -112,7 +110,7 @@ The internal CA can be initialized using the `--ca-pass` command line parameter 
 ```
 docker run \
   -v strongswan-data:/data \
-  cloudycube/strongswan \
+  griffinplus/strongswan \
   init \
   --ca-pass=<my-ca-secret> \
   --ca-key-type=<key-type> \
@@ -124,7 +122,7 @@ docker run \
   
 echo -e "<my-ca-secret>" | docker run -i \
   -v strongswan-data:/data \
-  cloudycube/strongswan \
+  griffinplus/strongswan \
   init \
   --ca-key-type=<key-type> \
   --server-key-type=<key-type> \
@@ -153,7 +151,7 @@ docker run -it \
   --security-opt apparmor=unconfined \
   --security-opt seccomp=unconfined \
   --env VPN_HOSTNAMES="vpn.my-domain.com" \
-  cloudycube/strongswan \
+  griffinplus/strongswan \
   run-and-enter
 ```
 
@@ -258,7 +256,7 @@ Default Value: `true`
 
 #### STARTUP_VERBOSITY
 
-Determines the verbosity of the *CloudyCube Container Startup System* (see [here](https://github.com/cloudycube/docker-base-supervisor) for details).
+Determines the verbosity of the *Griffin+ Container Startup System* (see [here](https://github.com/griffinplus/docker-base-supervisor) for details).
 
 - 0 => Logging is disabled.
 - 1 => Only errors are logged.
@@ -300,7 +298,7 @@ A user (VPN client) is always identified by its e-mail address, so `<id>` in the
 
 Commands that add clients or enable/disable clients need the private key of the internal CA. The private key of the internal CA is stored on the volume. It is encrypted, if you entered a password when initializing the internal CA. In this case these commands need the password to perform the operation. The password can be specified via the command line parameter `--ca-pass` (not recommended, the password will be visible in the process list and via docker's inspection features). A better approach is to pipe the password in via *stdin*. The container must be run with the *interactive* flag (`-i`) to make it work. If you additionally attach a pseudo tty to the container you will be prompted to enter the password.
 
-All commands support two output formats that are optimized for interactive use (`text`) and for scripting (`tsv`, tab-separated-values). The output format can be explicitly set by the `--out-format=[text|tsv]` parameter when running the command using `docker run`. If `--out-format` is not specified, the output format depends on whether the container has a pseudo TTY attached or not. If the command is run using `docker run -it cloudycube/strongswan <cmd>` (terminal mode) the container uses the `text` format, otherwise it uses the `tsv` format (scripting mode).
+All commands support two output formats that are optimized for interactive use (`text`) and for scripting (`tsv`, tab-separated-values). The output format can be explicitly set by the `--out-format=[text|tsv]` parameter when running the command using `docker run`. If `--out-format` is not specified, the output format depends on whether the container has a pseudo TTY attached or not. If the command is run using `docker run -it griffinplus/strongswan <cmd>` (terminal mode) the container uses the `text` format, otherwise it uses the `tsv` format (scripting mode).
 
 The `text` output format looks like the following:
 
@@ -329,7 +327,7 @@ A list of VPN clients - respectively their certificates - that were created by t
 ```
 docker run \
   -v strongswan-data:/data \
-  cloudycube/strongswan \
+  griffinplus/strongswan \
   list clients
 ```
 
@@ -342,21 +340,21 @@ A new VPN client - respectively a client certificate for a VPN client - can be c
 docker run -it \
   -v strongswan-data:/data \
   -v $PWD/client-data/:/data-out \
-  cloudycube/strongswan \
+  griffinplus/strongswan \
   add client <id>
 
 # passwords via command line parameters
 docker run \
   -v strongswan-data:/data \
   -v $PWD/client-data/:/data-out \
-  cloudycube/strongswan \
+  griffinplus/strongswan \
   add client <id> --ca-pass=<my-ca-secret> --pkcs12-pass=<my-pkcs12-secret>
 
 # passwords via stdin
 echo -e "<my-ca-secret>\n<my-pkcs12-secret>" | docker run -i \
   -v strongswan-data:/data \
   -v $PWD/client-data/:/data-out \
-  cloudycube/strongswan \
+  griffinplus/strongswan \
   add client <id>
 ```
 
@@ -378,19 +376,19 @@ As with the other commands the password of the internal CA can be entered intera
 # password prompt (interactive)
 docker run -it \
   --volume strongswan-data:/data \
-  cloudycube/strongswan \
+  griffinplus/strongswan \
   disable|enable client <id> [<certificate-serial>]
 
 # password via command line parameters
 docker run \
   --volume strongswan-data:/data \
-  cloudycube/strongswan \
+  griffinplus/strongswan \
   disable|enable client <id> [<certificate-serial>] --ca-pass=<my-ca-secret>
   
 # password via stdin
 echo -e "<my-ca-secret>" | docker run -i \
   --volume strongswan-data:/data \
-  cloudycube/strongswan \
+  griffinplus/strongswan \
   disable|enable client <id> [<certificate-serial>]
 ```
 

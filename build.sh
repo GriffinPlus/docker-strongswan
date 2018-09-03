@@ -1,3 +1,3 @@
 #!/bin/bash
 
-docker build -t cloudycube/strongswan .
+docker build -t griffinplus/strongswan .

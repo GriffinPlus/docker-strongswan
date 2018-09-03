@@ -2,4 +2,4 @@ version: '2'
 
 services:
   strongswan:
-    image: cloudycube/strongswan
+    image: griffinplus/strongswan

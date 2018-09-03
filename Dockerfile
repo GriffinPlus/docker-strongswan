@@ -1,4 +1,4 @@
-FROM cloudycube/base-supervisor
+FROM griffinplus/base-supervisor
 MAINTAINER Sascha Falk <sascha@falk-online.eu>
 
 ENV STRONGSWAN_VERSION="5.6.1"

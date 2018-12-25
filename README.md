@@ -1,10 +1,10 @@
 # Docker Image with StrongSwan
 
-[![Build Status](https://travis-ci.org/GriffinPlus/docker-strongswan.svg?branch=master)](https://travis-ci.org/GriffinPlus/docker-strongswan) [![Docker 
-Pulls](https://img.shields.io/docker/pulls/GriffinPlus/strongswan.svg)](https://hub.docker.com/r/GriffinPlus/strongswan) [![Github 
-Stars](https://img.shields.io/github/stars/GriffinPlus/docker-strongswan.svg?label=github%20%E2%98%85)](https://github.com/GriffinPlus/docker-strongswan) [![Github 
-Stars](https://img.shields.io/github/contributors/GriffinPlus/docker-strongswan.svg)](https://github.com/GriffinPlus/docker-strongswan) [![Github 
-Forks](https://img.shields.io/github/forks/GriffinPlus/docker-strongswan.svg?label=github%20forks)](https://github.com/GriffinPlus/docker-strongswan)
+[![Build Status](https://travis-ci.com/GriffinPlus/docker-strongswan.svg?branch=master)](https://travis-ci.com/GriffinPlus/docker-strongswan)
+[![Docker Pulls](https://img.shields.io/docker/pulls/griffinplus/strongswan.svg)](https://hub.docker.com/r/griffinplus/strongswan)
+[![Github Stars](https://img.shields.io/github/stars/griffinplus/docker-strongswan.svg?label=github%20%E2%98%85)](https://github.com/griffinplus/docker-strongswan)
+[![Github Stars](https://img.shields.io/github/contributors/griffinplus/docker-strongswan.svg)](https://github.com/griffinplus/docker-strongswan)
+[![Github Forks](https://img.shields.io/github/forks/griffinplus/docker-strongswan.svg?label=github%20forks)](https://github.com/griffinplus/docker-strongswan)
 
 
 ## Overview

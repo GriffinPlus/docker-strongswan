@@ -1,7 +1,7 @@
 FROM griffinplus/base-supervisor
 MAINTAINER Sascha Falk <sascha@falk-online.eu>
 
-ENV STRONGSWAN_VERSION="5.6.1"
+ENV STRONGSWAN_VERSION="5.7.1"
 
 # Update image and install additional packages
 # -----------------------------------------------------------------------------
@@ -11,7 +11,7 @@ RUN \
   apt-get -y update && \
   apt-get -y install \
     bind9 \
-    libcurl3 libgmp10 libssl1.0.0 \
+    libcurl4 libgmp10 libssl1.0.0 \
     $DEV_PACKAGES && \
   \
   # download and build strongswan source code

@@ -19,8 +19,8 @@ from datetime import datetime, timedelta
 from glob import iglob
 from ipaddress import ip_address
 from stat import S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP, S_IROTH, S_IWOTH
-from ..cc_log import Log
-from ..cc_helpers import is_email_address
+from ..gp_log import Log
+from ..gp_helpers import is_email_address
 
 
 # -------------------------------------------------------------------------------------------------------------------------------------------------------------

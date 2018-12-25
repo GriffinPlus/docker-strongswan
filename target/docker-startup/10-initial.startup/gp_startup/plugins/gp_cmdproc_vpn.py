@@ -22,16 +22,16 @@ from netaddr import IPAddress, IPNetwork, AddrFormatError
 from stat import S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP, S_IROTH, S_IWOTH
 from subprocess import run, DEVNULL
 
-from ..cc_log import Log
-from ..cc_cmdproc import CommandProcessor, PositionalArgument, NamedArgument
-from ..cc_errors import ExitCodeError, FileNotFoundError, GeneralError, CommandLineArgumentError, IoError, EXIT_CODE_SUCCESS
-from ..cc_helpers import read_text_file, write_text_file, print_error, readline_if_no_tty, \
+from ..gp_log import Log
+from ..gp_cmdproc import CommandProcessor, PositionalArgument, NamedArgument
+from ..gp_errors import ExitCodeError, FileNotFoundError, GeneralError, CommandLineArgumentError, IoError, EXIT_CODE_SUCCESS
+from ..gp_helpers import read_text_file, write_text_file, print_error, readline_if_no_tty, \
                          get_env_setting_bool, get_env_setting_integer, get_env_setting_string, \
                          iptables_run, iptables_add, ip6tables_run, ip6tables_add, \
                          does_mount_point_exist, is_mount_point_readonly, \
                          load_kernel_module, resolve_hostnames, \
                          is_email_address
-from . import cc_ca
+from . import gp_ca
 
 
 # -------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -176,11 +176,11 @@ class VpnCommandProcessor(CommandProcessor):
                                               NamedArgument("out-format", min_occurrence = 0, max_occurrence = 1))
 
         # register exception handlers for exceptions raised by the internal CA
-        self.add_exception_handler(self.__handle_exceptions, cc_ca.NotInitializedError)
-        self.add_exception_handler(self.__handle_exceptions, cc_ca.AlreadyInitializedError)
-        self.add_exception_handler(self.__handle_exceptions, cc_ca.PasswordRequiredError)
-        self.add_exception_handler(self.__handle_exceptions, cc_ca.InvalidPasswordError)
-        self.add_exception_handler(self.__handle_exceptions, cc_ca.InconsistencyDetectedError)
+        self.add_exception_handler(self.__handle_exceptions, gp_ca.NotInitializedError)
+        self.add_exception_handler(self.__handle_exceptions, gp_ca.AlreadyInitializedError)
+        self.add_exception_handler(self.__handle_exceptions, gp_ca.PasswordRequiredError)
+        self.add_exception_handler(self.__handle_exceptions, gp_ca.InvalidPasswordError)
+        self.add_exception_handler(self.__handle_exceptions, gp_ca.InconsistencyDetectedError)
 
 
     # -------------------------------------------------------------------------------------------------------------------------------------
@@ -242,44 +242,44 @@ class VpnCommandProcessor(CommandProcessor):
         client_cert_subject = named_args["client-cert-subject"][0] if len(named_args["client-cert-subject"]) > 0 else None
 
         # validate the 'ca-key-type' argument
-        if ca_key_type == None or not ca_key_type.lower() in [kt.name for kt in cc_ca.KeyTypes.all()]:
+        if ca_key_type == None or not ca_key_type.lower() in [kt.name for kt in gp_ca.KeyTypes.all()]:
             error = "Please specify a supported key type to use for the CA. You may specfify:\n"
-            max_length = max([len(x.name) for x in cc_ca.KeyTypes.all()])
+            max_length = max([len(x.name) for x in gp_ca.KeyTypes.all()])
             line_format = "--ca-key-type={{0:{0}}}   {{1}}\n".format(max_length)
-            for type in cc_ca.KeyTypes.all():
+            for type in gp_ca.KeyTypes.all():
                 error += line_format.format(type.name, type.description)
             raise CommandLineArgumentError(error)
 
         # validate the 'server-key-type' argument
-        if server_key_type == None or not server_key_type.lower() in [kt.name for kt in cc_ca.KeyTypes.all()]:
+        if server_key_type == None or not server_key_type.lower() in [kt.name for kt in gp_ca.KeyTypes.all()]:
             error = "Please specify a supported key type to use for the VPN server. You may specfify:\n"
-            max_length = max([len(x.name) for x in cc_ca.KeyTypes.all()])
+            max_length = max([len(x.name) for x in gp_ca.KeyTypes.all()])
             line_format = "--server-key-type={{0:{0}}}   {{1}}\n".format(max_length)
-            for type in cc_ca.KeyTypes.all():
+            for type in gp_ca.KeyTypes.all():
                 error += line_format.format(type.name, type.description)
             raise CommandLineArgumentError(error)
 
         # validate the 'client-key-type' argument
-        if client_key_type == None or not client_key_type.lower() in [kt.name for kt in cc_ca.KeyTypes.all()]:
+        if client_key_type == None or not client_key_type.lower() in [kt.name for kt in gp_ca.KeyTypes.all()]:
             error = "Please specify a supported key type to use for VPN clients. You may specfify:\n"
-            max_length = max([len(x.name) for x in cc_ca.KeyTypes.all()])
+            max_length = max([len(x.name) for x in gp_ca.KeyTypes.all()])
             line_format = "--client-key-type={{0:{0}}}   {{1}}\n".format(max_length)
-            for type in cc_ca.KeyTypes.all():
+            for type in gp_ca.KeyTypes.all():
                 error += line_format.format(type.name, type.description)
             raise CommandLineArgumentError(error)
 
         # validate the arguments 'ca-cert-subject', 'server-cert-subject' and 'client-cert-subject'
-        try:     cc_ca.CertificateAuthority.build_x509_name(ca_cert_subject)
+        try:     gp_ca.CertificateAuthority.build_x509_name(ca_cert_subject)
         except:  raise CommandLineArgumentError("Invalid DN ({0}).", ca_cert_subject)
-        try:     cc_ca.CertificateAuthority.build_x509_name(server_cert_subject)
+        try:     gp_ca.CertificateAuthority.build_x509_name(server_cert_subject)
         except:  raise CommandLineArgumentError("Invalid DN ({0}).", server_cert_subject)
-        try:     cc_ca.CertificateAuthority.build_x509_name(client_cert_subject)
+        try:     gp_ca.CertificateAuthority.build_x509_name(client_cert_subject)
         except:  raise CommandLineArgumentError("Invalid DN ({0}).", client_cert_subject)
 
         # check whether the CA environment is already initialized
-        ca = cc_ca.CertificateAuthority()
+        ca = gp_ca.CertificateAuthority()
         if ca.is_inited():
-            raise cc_ca.AlreadyInitializedError("The internal CA is already initialized.")
+            raise gp_ca.AlreadyInitializedError("The internal CA is already initialized.")
 
         # query user to enter the password, if it was not specified in the command line
         if ca_pass == None:
@@ -288,11 +288,11 @@ class VpnCommandProcessor(CommandProcessor):
                 if len(ca_pass) > 0:
                     ca_pass_verify = getpass("Please enter the password once again: ").strip()
                     if ca_pass != ca_pass_verify:
-                        raise cc_ca.InvalidPasswordError("Password verification failed.")
+                        raise gp_ca.InvalidPasswordError("Password verification failed.")
                 else:
                     print("The password is empty. CA related data is not encrypted!")
             else:
-                raise cc_ca.PasswordRequiredError("Please specify the CA password as command line argument or run the container in terminal mode, if you want to enter the password interactively.")
+                raise gp_ca.PasswordRequiredError("Please specify the CA password as command line argument or run the container in terminal mode, if you want to enter the password interactively.")
 
         # initialize the CA environment
         ca.init(ca_pass, ca_key_type, server_key_type, client_key_type, ca_cert_subject, server_cert_subject, client_cert_subject)
@@ -386,11 +386,11 @@ class VpnCommandProcessor(CommandProcessor):
                 if len(pkcs12_pass) > 0:
                     pkcs12_pass_verify = getpass("Please enter the password once again: ").strip()
                     if pkcs12_pass != pkcs12_pass_verify:
-                        raise cc_ca.InvalidPasswordError("Password verification failed.")
+                        raise gp_ca.InvalidPasswordError("Password verification failed.")
                 else:
                     print("WARNING: The password is empty, the PKCS12 file is not encrypted.")
             else:
-                raise cc_ca.PasswordRequiredError("Please specify the password for the PKCS12 file as command line argument (--pkcs12-pass) or run the container in terminal mode, if you want to enter the password interactively.")
+                raise gp_ca.PasswordRequiredError("Please specify the password for the PKCS12 file as command line argument (--pkcs12-pass) or run the container in terminal mode, if you want to enter the password interactively.")
 
         # add the client
         # -----------------------------------------------------------------------------------------
@@ -814,9 +814,9 @@ class VpnCommandProcessor(CommandProcessor):
 
         # setup cryptographic stuff
         # -------------------------------------------------------------------------------------------------------------
-        self.__ca = cc_ca.CertificateAuthority()
+        self.__ca = gp_ca.CertificateAuthority()
         if not self.__ca.is_inited():
-            raise cc_ca.NotInitializedError("The CA is not initialized.")
+            raise gp_ca.NotInitializedError("The CA is not initialized.")
         self.__init_pki_for_server(named_args)
         self.__init_pki_for_clients()
 
@@ -1302,7 +1302,7 @@ class VpnCommandProcessor(CommandProcessor):
                     foundSubjectAltNameExtension = False
                     for extension in server_cert.extensions:
                         if extension.oid == x509.SubjectAlternativeName.oid:
-                            expected_san = cc_ca.CertificateAuthority.build_san(sans)
+                            expected_san = gp_ca.CertificateAuthority.build_san(sans)
                             if extension.value != expected_san:
                                 Log.write_warning("Found extension 'subjectAltName', but it is '{0}', should be '{1}'.",
                                                   ", ".join([x.value for x in extension.value]),
@@ -1323,7 +1323,7 @@ class VpnCommandProcessor(CommandProcessor):
                     if sys.stdin.isatty():
                         ca_pass = getpass("Please enter the password of the CA: ").strip()
                     else:
-                        raise cc_ca.PasswordRequiredError("Please specify the CA password as command line argument or run the container in terminal mode, if you want to enter the password interactively.")
+                        raise gp_ca.PasswordRequiredError("Please specify the CA password as command line argument or run the container in terminal mode, if you want to enter the password interactively.")
                 self.__ca.password = ca_pass
 
                 # create new key and certificate for the VPN server
@@ -1408,23 +1408,23 @@ class VpnCommandProcessor(CommandProcessor):
             Exit code to return from the startup system.
 
         """
-        if type(error) is cc_ca.NotInitializedError:
+        if type(error) is gp_ca.NotInitializedError:
             Log.write_error(error.message)
             if not Log.uses_stdio: print_error(error.message)
             return EXIT_CODE_CA_NOT_INITIALIZED
-        elif type(error) is cc_ca.AlreadyInitializedError:
+        elif type(error) is gp_ca.AlreadyInitializedError:
             Log.write_error(error.message)
             if not Log.uses_stdio: print_error(error.message)
             return EXIT_CODE_CA_ALREADY_INITIALIZED
-        elif type(error) is cc_ca.PasswordRequiredError:
+        elif type(error) is gp_ca.PasswordRequiredError:
             Log.write_error(error.message)
             if not Log.uses_stdio: print_error(error.message)
             return EXIT_CODE_PASSWORD_REQUIRED
-        elif type(error) is cc_ca.InvalidPasswordError:
+        elif type(error) is gp_ca.InvalidPasswordError:
             Log.write_error(error.message)
             if not Log.uses_stdio: print_error(error.message)
             return EXIT_CODE_PASSWORD_WRONG
-        elif type(error) is cc_ca.InconsistencyDetectedError:
+        elif type(error) is gp_ca.InconsistencyDetectedError:
             Log.write_error(error.message)
             if not Log.uses_stdio: print_error(error.message)
             return EXIT_CODE_CA_INCONSISTENCY_DETECTED
@@ -1651,7 +1651,7 @@ class VpnCommandProcessor(CommandProcessor):
 
         # ensure the CA password is set properly, if necessary
         # -----------------------------------------------------------------------------------------
-        ca = cc_ca.CertificateAuthority()
+        ca = gp_ca.CertificateAuthority()
         if command_requires_ca_pass:
 
             if ca.password_required:
@@ -1661,10 +1661,10 @@ class VpnCommandProcessor(CommandProcessor):
                     if sys.stdin.isatty():
                         ca_pass = getpass("Please enter the password of the CA: ").strip()
                     else:
-                        raise cc_ca.PasswordRequiredError("Please specify the CA password as command line argument or run the container in terminal mode, if you want to enter the password interactively.")
+                        raise gp_ca.PasswordRequiredError("Please specify the CA password as command line argument or run the container in terminal mode, if you want to enter the password interactively.")
 
                 # set the CA password
-                ca.password = ca_pass  # can raise cc_ca.InvalidPasswordError
+                ca.password = ca_pass  # can raise gp_ca.InvalidPasswordError
 
         # CA is set up properly, command can be handled
         # -----------------------------------------------------------------------------------------

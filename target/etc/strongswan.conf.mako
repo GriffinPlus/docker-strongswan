@@ -16,7 +16,9 @@ charon {
     # see https://wiki.strongswan.org/projects/strongswan/wiki/LoggerConfiguration
 
     filelog {
-        /var/log/charon.log {
+        charon {
+            # path of the log file
+            path = /var/log/charon.log
             # add a timestamp prefix
             time_format = %b %e %T
             # prepend connection name, simplifies grepping

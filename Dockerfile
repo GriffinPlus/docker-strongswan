@@ -11,7 +11,6 @@ RUN \
   apt-get -y update && \
   apt-get -y install \
     bind9 \
-    iptables \
     libcurl4 libgmp10 libssl1.0.0 \
     module-init-tools \
     $DEV_PACKAGES && \

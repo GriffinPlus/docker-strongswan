@@ -1,0 +1,51 @@
+# The pipeline builds the docker image, tags it as 'latest' and pushes it to the Docker Hub
+
+variables:
+  - group: AzureKeyVault
+  - name: repository
+    value: griffinplus/strongswan
+  - name: image_tag
+    value: latest
+  - name: registry_user
+    value: $(dockerhub-user)
+  - name: registry_password
+    value: $(dockerhub-password)
+
+# trigger when branch 'master' changes
+# (the pipeline is triggered as well when the base image pipeline completes)
+trigger:
+  - master
+
+# do not trigger on pull requests to avoid that tag 'latest' is pushed for pull requests
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+- task: Docker@2
+  displayName: Login
+  inputs:
+    command: login
+    containerregistry: Docker Hub
+- task: Docker@2
+  displayName: Build and Push
+  inputs:
+    command: buildAndPush
+    Dockerfile: ./Dockerfile
+    repository: $(repository)
+    tags: $(image_tag)
+- script: |
+      docker run \
+      -v $PWD:/workspace \
+      -e DOCKERHUB_USERNAME='$(registry_user)' \
+      -e DOCKERHUB_PASSWORD='$(registry_password)' \
+      -e DOCKERHUB_REPOSITORY='$(repository)' \
+      -e README_FILEPATH='/workspace/README.md' \
+      peterevans/dockerhub-description:2.0.0
+  displayName: Update Image Description
+- task: Docker@2
+  displayName: Logout
+  inputs:
+    command: logout
+    containerRegistry: Docker Hub

@@ -1,14 +1,14 @@
 # Docker Image with StrongSwan
 
-[![Build Status](https://travis-ci.com/GriffinPlus/docker-strongswan.svg?branch=master)](https://travis-ci.com/GriffinPlus/docker-strongswan)
+[![Build Status](https://dev.azure.com/griffinplus/Docker%20Images/_apis/build/status/7?branchName=master)](https://dev.azure.com/griffinplus/Docker%20Images/_build/latest?definitionId=7&branchName=master)
 [![Docker Pulls](https://img.shields.io/docker/pulls/griffinplus/strongswan.svg)](https://hub.docker.com/r/griffinplus/strongswan)
 [![Github Stars](https://img.shields.io/github/stars/griffinplus/docker-strongswan.svg?label=github%20%E2%98%85)](https://github.com/griffinplus/docker-strongswan)
-[![Github Stars](https://img.shields.io/github/contributors/griffinplus/docker-strongswan.svg)](https://github.com/griffinplus/docker-strongswan)
+[![Github Contributors](https://img.shields.io/github/contributors/griffinplus/docker-strongswan.svg)](https://github.com/griffinplus/docker-strongswan)
 [![Github Forks](https://img.shields.io/github/forks/griffinplus/docker-strongswan.svg?label=github%20forks)](https://github.com/griffinplus/docker-strongswan)
 
 
 ## Overview
-This is a Docker image deriving from the [base-supervisor](https://github.com/griffinplus/docker-base-supervisor) image. It adds the popular VPN software [StrongSwan](https://www.strongswan.org/) that allows you to create a VPN tunnel from common IKEv2 capable IPSec VPN clients right into your Docker stack. It can be useful, if you want to access your services remotely, but don't want your services (especially administration panels) to be visible on the public internet. This greatly reduces attack vectors malicious people can use to gain access to your system.
+This is a Docker image deriving from the [base-supervisor](https://github.com/GriffinPlus/docker-base/tree/master/base-supervisor) image. It adds the popular VPN software [StrongSwan](https://www.strongswan.org/) that allows you to create a VPN tunnel from common IKEv2 capable IPSec VPN clients right into your Docker stack. It can be useful, if you want to access your services remotely, but don't want your services (especially administration panels) to be visible on the public internet. This greatly reduces attack vectors malicious people can use to gain access to your system.
 
 The image provides the following features:
 - StrongSwan Version 5.8.0

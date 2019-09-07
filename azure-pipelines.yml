@@ -41,7 +41,7 @@ steps:
       -e DOCKERHUB_USERNAME='$(registry_user)' \
       -e DOCKERHUB_PASSWORD='$(registry_password)' \
       -e DOCKERHUB_REPOSITORY='$(repository)' \
-      -e README_FILEPATH='/workspace/README.md' \
+      -e README_FILEPATH='/workspace/README-DockerHub.md' \
       peterevans/dockerhub-description:2.0.0
   displayName: Update Image Description
 - task: Docker@2

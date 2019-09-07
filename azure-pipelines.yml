@@ -49,3 +49,11 @@ steps:
   inputs:
     command: logout
     containerRegistry: Docker Hub
+- script: |
+    pip3 install -r tests/requirements.txt
+    cd tests
+    docker-compose -f docker-compose.default.yml up -d
+    sleep 30
+    nose2
+    docker-compose -f docker-compose.default.yml down
+  displayName: Test Container Startup/Shutdown

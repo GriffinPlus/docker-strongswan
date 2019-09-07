@@ -29,10 +29,20 @@ steps:
     command: login
     containerregistry: Docker Hub
 - task: Docker@2
-  displayName: Build and Push
+  displayName: Build
   inputs:
-    command: buildAndPush
+    command: build
     Dockerfile: ./Dockerfile
+    repository: $(repository)
+    tags: $(image_tag)
+- script: |
+    sudo apt-get install python3-venv
+    tests/run-tests.sh
+  displayName: Test
+- task: Docker@2
+  displayName: Push
+  inputs:
+    command: push
     repository: $(repository)
     tags: $(image_tag)
 - script: |
@@ -49,11 +59,3 @@ steps:
   inputs:
     command: logout
     containerRegistry: Docker Hub
-- script: |
-    pip3 install -r tests/requirements.txt
-    cd tests
-    docker-compose -f docker-compose.default.yml up -d
-    sleep 30
-    nose2
-    docker-compose -f docker-compose.default.yml down
-  displayName: Test Container Startup/Shutdown

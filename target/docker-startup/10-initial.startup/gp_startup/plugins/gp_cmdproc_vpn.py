@@ -686,6 +686,17 @@ class VpnCommandProcessor(CommandProcessor):
 
     def __run_prepare(self, pos_args, named_args):
 
+        # USE_INTERFACES
+        # -------------------------------------------------------------------------------------------------------------
+        interfaces = get_env_setting_string("USE_INTERFACES", "eth0")
+        self.__interfaces = []
+        for interface in [ x.strip() for x in interfaces.split(",") ]:
+            if interface.lower() == "all":
+                self.__interfaces = []  # strongswan uses all interfaces, if no interface is specified
+                break
+            if len(interface) > 0:
+                self.__interfaces.append(interface)
+
         # ALLOW_INTERCLIENT_COMMUNICATION
         # -------------------------------------------------------------------------------------------------------------
         self.__allow_interclient_communication = get_env_setting_bool("ALLOW_INTERCLIENT_COMMUNICATION", False)
@@ -852,6 +863,7 @@ class VpnCommandProcessor(CommandProcessor):
         # prepare context for the template engine that will generate strongswan.conf and ipsec.conf
         # -------------------------------------------------------------------------------------------------------------
         template_context = {
+          "interfaces"                     : self.__interfaces,
           "ca_cert_path"                   : self.__ca_cert_path,
           "ca_crl_path"                    : self.__ca_crl_path,
           "server_key_type"                : self.__server_private_key_type,   # rsa, ec

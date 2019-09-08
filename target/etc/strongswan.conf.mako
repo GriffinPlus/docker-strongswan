@@ -5,7 +5,9 @@
 
 charon {
     load_modular = yes
-    interfaces_use = eth0
+% if len(interfaces) > 0:
+    interfaces_use = ${','.join(interfaces)}
+% endif
     send_vendor_id = yes
 
     plugins {

@@ -62,7 +62,7 @@ steps:
     tags: $(image_tag)
 - script: |
       docker run \
-      -v $PWD:/workspace \
+      -v $(basedir):/workspace \
       -e DOCKERHUB_USERNAME='$(registry_user)' \
       -e DOCKERHUB_PASSWORD='$(registry_password)' \
       -e DOCKERHUB_REPOSITORY='$(repository)' \

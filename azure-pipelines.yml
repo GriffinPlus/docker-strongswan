@@ -14,7 +14,12 @@ variables:
 # trigger when branch 'master' changes
 # (the pipeline is triggered as well when the base image pipeline completes)
 trigger:
-  - master
+  branches:
+    include:
+    - master
+  paths:
+    exclude:
+    - client-route-manager/*
 
 # do not trigger on pull requests to avoid that tag 'latest' is pushed for pull requests
 pr: none

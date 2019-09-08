@@ -21,6 +21,8 @@ trigger:
   paths:
     include:
     - client-route-manager/*
+    exclude:
+    - client-route-manager/README.md
 
 # do not trigger on pull requests to avoid that tag 'latest' is pushed for pull requests
 pr: none

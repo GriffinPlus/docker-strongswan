@@ -20,6 +20,8 @@ trigger:
   paths:
     exclude:
     - client-route-manager/*
+    - README.md
+    - README-DockerHub.md
 
 # do not trigger on pull requests to avoid that tag 'latest' is pushed for pull requests
 pr: none

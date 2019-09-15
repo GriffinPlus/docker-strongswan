@@ -43,6 +43,7 @@ steps:
     repository: $(repository)
     tags: $(image_tag)
 - script: |
+    sudo apt-get update
     sudo apt-get install python3-venv
     tests/run-tests.sh
   displayName: Test

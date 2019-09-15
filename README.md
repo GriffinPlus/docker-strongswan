@@ -1,7 +1,7 @@
 # Docker Image with StrongSwan
 
 [![Build Status](https://dev.azure.com/griffinplus/Docker%20Images/_apis/build/status/7?branchName=master)](https://dev.azure.com/griffinplus/Docker%20Images/_build/latest?definitionId=7&branchName=master)
-[![Docker Pulls](https://img.shields.io/docker/pulls/griffinplus/strongswan.svg)](https://cloud.docker.com/r/griffinplus/strongswan)
+[![Docker Pulls](https://img.shields.io/docker/pulls/griffinplus/strongswan.svg)](https://hub.docker.com/r/griffinplus/strongswan)
 [![Github Stars](https://img.shields.io/github/stars/griffinplus/docker-strongswan.svg?label=github%20%E2%98%85)](https://github.com/griffinplus/docker-strongswan)
 [![Github Contributors](https://img.shields.io/github/contributors/griffinplus/docker-strongswan.svg)](https://github.com/griffinplus/docker-strongswan)
 [![Github Forks](https://img.shields.io/github/forks/griffinplus/docker-strongswan.svg?label=github%20forks)](https://github.com/griffinplus/docker-strongswan)

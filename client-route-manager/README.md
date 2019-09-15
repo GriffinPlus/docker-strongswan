@@ -1,7 +1,7 @@
 # Configuration Helper Image for Routing an IPv6 Client Subnet
 
 [![Build Status](https://dev.azure.com/griffinplus/Docker%20Images/_apis/build/status/8?branchName=master)](https://dev.azure.com/griffinplus/Docker%20Images/_build/latest?definitionId=8&branchName=master)
-[![Docker Pulls](https://img.shields.io/docker/pulls/griffinplus/strongswan-client-route-manager.svg)](https://cloud.docker.com/r/griffinplus/strongswan-client-route-manager)
+[![Docker Pulls](https://img.shields.io/docker/pulls/griffinplus/strongswan-client-route-manager.svg)](https://hub.docker.com/r/griffinplus/strongswan-client-route-manager)
 
 This image helps to set up a route to the IPv6 client subnet assigned to VPN clients. This is necessary, if you've
 chosen to give your VPN clients public IPv6 addresses, so they can directly communicate with other hosts on the

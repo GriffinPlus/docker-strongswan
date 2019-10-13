@@ -70,7 +70,7 @@ steps:
       -e DOCKERHUB_PASSWORD='$(registry_password)' \
       -e DOCKERHUB_REPOSITORY='$(repository)' \
       -e README_FILEPATH='/workspace/README.md' \
-      peterevans/dockerhub-description:2.0.0
+      griffinplus/dockerhub-description:latest
   displayName: Update Image Description
 - task: Docker@2
   displayName: Logout

@@ -11,7 +11,7 @@
 This is a Docker image deriving from the [base-supervisor](https://github.com/GriffinPlus/docker-base/tree/master/base-supervisor) image. It adds the popular VPN software [StrongSwan](https://www.strongswan.org/) that allows you to create a VPN tunnel from common IKEv2 capable IPSec VPN clients right into your Docker stack. It can be useful, if you want to access your services remotely, but don't want your services (especially administration panels) to be visible on the public internet. This greatly reduces attack vectors malicious people can use to gain access to your system.
 
 The image provides the following features:
-- StrongSwan Version 5.8.0
+- StrongSwan Version 5.9.0
 - Road Warrior Setup for Remote Access / Mobile Devices
 - Dual-Stack Tunnel Broker (IPv4-over-IPv4, IPv4-over-IPv6, IPv6-over-IPv4, IPv6-over-IPv4)
 - Authentication Methods

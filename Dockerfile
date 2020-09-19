@@ -1,7 +1,7 @@
 FROM griffinplus/base-supervisor
 MAINTAINER Sascha Falk <sascha@falk-online.eu>
 
-ENV STRONGSWAN_VERSION="5.8.0"
+ENV STRONGSWAN_VERSION="5.9.0"
 
 # Update image and install additional packages
 # -----------------------------------------------------------------------------

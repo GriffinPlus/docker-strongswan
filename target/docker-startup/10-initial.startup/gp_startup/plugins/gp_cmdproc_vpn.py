@@ -59,10 +59,8 @@ def get_processor():
 SEPARATOR_LINE = "----------------------------------------------------------------------------------------------------------------------"
 
 # configuration files
-IPSEC_CONF_PATH                  = "/etc/ipsec.conf"
-IPSEC_CONF_TEMPLATE_PATH         = "/etc/ipsec.conf.mako"
-IPSEC_SECRETS_PATH               = "/etc/ipsec.secrets"
-IPSEC_SECRETS_TEMPLATE_PATH      = "/etc/ipsec.secrets.mako"
+SWANCTL_CONF_PATH                = "/etc/swanctl/swanctl.conf"
+SWANCTL_CONF_TEMPLATE_PATH       = "/etc/swanctl/swanctl.conf.mako"
 STRONGSWAN_CONF_PATH             = "/etc/strongswan.conf"
 STRONGSWAN_CONF_TEMPLATE_PATH    = "/etc/strongswan.conf.mako"
 NAMED_CONF_OPTIONS_PATH          = "/etc/bind/named.conf.options"
@@ -864,6 +862,7 @@ class VpnCommandProcessor(CommandProcessor):
         # -------------------------------------------------------------------------------------------------------------
         template_context = {
           "interfaces"                     : self.__interfaces,
+          "vpn_hostnames"                  : self.__vpn_hostnames,
           "ca_cert_path"                   : self.__ca_cert_path,
           "ca_crl_path"                    : self.__ca_crl_path,
           "server_key_type"                : self.__server_private_key_type,   # rsa, ec
@@ -889,16 +888,10 @@ class VpnCommandProcessor(CommandProcessor):
         with open(NAMED_CONF_OPTIONS_PATH, "wt") as f:
             f.write(rendered)
 
-        # generate ipsec.conf
+        # generate swanctl.conf
         # -------------------------------------------------------------------------------------------------------------
-        rendered = Template(filename = IPSEC_CONF_TEMPLATE_PATH).render(**template_context)
-        with open(IPSEC_CONF_PATH, "wt") as f:
-            f.write(rendered)
-
-        # generate ipsec.secrets
-        # -------------------------------------------------------------------------------------------------------------
-        rendered = Template(filename = IPSEC_SECRETS_TEMPLATE_PATH).render(**template_context)
-        with open(IPSEC_SECRETS_PATH, "wt") as f:
+        rendered = Template(filename = SWANCTL_CONF_TEMPLATE_PATH).render(**template_context)
+        with open(SWANCTL_CONF_PATH, "wt") as f:
             f.write(rendered)
 
         # generate strongswan.conf
@@ -916,14 +909,23 @@ class VpnCommandProcessor(CommandProcessor):
             run(["mount", "-o", "remount,rw", "/proc/sys"], check=True, stdout=DEVNULL)
             sys_proc_remounted_rw = True
 
-        # link the certificate and the CRL of the internal CA into /etc/ipsec.d/[cacerts|crls]
+        # link the certificate and the CRL of the internal CA into /etc/swanctl/[x509ca|x509crl]
         # -------------------------------------------------------------------------------------------------------------
-        destination_ca_crl_path = os.path.join("/etc/ipsec.d/crls", os.path.basename(self.__ca_crl_path))
-        destination_ca_cert_path = os.path.join("/etc/ipsec.d/cacerts", os.path.basename(self.__ca_cert_path))
+        destination_ca_crl_path = os.path.join("/etc/swanctl/x509crl", os.path.basename(self.__ca_crl_path))
+        destination_ca_cert_path = os.path.join("/etc/swanctl/x509ca", os.path.basename(self.__ca_cert_path))
         if os.path.exists(destination_ca_crl_path): os.remove(destination_ca_crl_path)
         if os.path.exists(destination_ca_cert_path): os.remove(destination_ca_cert_path)
         os.symlink(self.__ca_crl_path, destination_ca_crl_path)
         os.symlink(self.__ca_cert_path, destination_ca_cert_path)
+
+        # link the server's certificate and its private key into /etc/swanctl/[x509|private]
+        # -------------------------------------------------------------------------------------------------------------
+        destination_server_cert_path = os.path.join("/etc/swanctl/x509", os.path.basename(self.__server_cert_path))
+        destination_server_key_path = os.path.join("/etc/swanctl/private", os.path.basename(self.__server_key_path))
+        if os.path.exists(destination_server_cert_path): os.remove(destination_server_cert_path)
+        if os.path.exists(destination_server_key_path): os.remove(destination_server_key_path)
+        os.symlink(self.__server_cert_path, destination_server_cert_path)
+        os.symlink(self.__server_key_path, destination_server_key_path)
 
         # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         # configure networking

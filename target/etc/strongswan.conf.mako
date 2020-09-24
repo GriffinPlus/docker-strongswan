@@ -14,6 +14,10 @@ charon {
         include strongswan.d/charon/*.conf
     }
 
+    start-scripts {
+        load-all = /usr/sbin/swanctl --load-all
+    } 
+
     # logger configuration
     # see https://wiki.strongswan.org/projects/strongswan/wiki/LoggerConfiguration
 

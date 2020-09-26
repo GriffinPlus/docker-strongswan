@@ -755,6 +755,10 @@ class VpnCommandProcessor(CommandProcessor):
         # -------------------------------------------------------------------------------------------------------------
         self.__protect_clients_from_internet = get_env_setting_bool("PROTECT_CLIENTS_FROM_INTERNET", True)
 
+        # TCP_MSS
+        # -------------------------------------------------------------------------------------------------------------
+        self.__tcp_mss = get_env_setting_integer("TCP_MSS", 1200)
+
         # IKE_PROPOSALS
         # -------------------------------------------------------------------------------------------------------------
 
@@ -1190,26 +1194,37 @@ class VpnCommandProcessor(CommandProcessor):
 
         # Reduce the size of TCP packets by adjusting the packets' maximum segment size to prevent IP packet fragmentation
         # on some clients. This prevents issues with some VPN clients, but it is controversially discussed (google 'MSS
-        # Clamping' for details). Many tunnel implementation use a tunnel MTU of 1400 bytes, so the following MSS values
-        # should be reasonable:
-        # - TCP MSS (IPv4): 1400 bytes (tunnel MTU) - 20 bytes (IPv4 header) - 20 bytes (TCP header) = 1360 bytes
-        # - TCP MSS (IPv6): 1400 bytes (tunnel MTU) - 40 bytes (IPv6 header) - 20 bytes (TCP header) = 1340 bytes
+        # Clamping' for details).
         # -------------------------------------------------------------------------------------------------------------
+        mss_range = '{}:2000'.format(self.__tcp_mss + 1)
+        mss = '{}'.format(self.__tcp_mss)
         iptables_run([ "-t", "mangle",
                        "-A", "FORWARD",
                        "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
-                       "-s", str(self.__client_subnet_ipv4),
-                       "-m", "policy", "--dir", "in", "--pol", "ipsec",
-                       "-m", "tcpmss", "--mss", "1361:1500",
-                       "-j", "TCPMSS", "--set-mss", "1360"])
+                       "-m", "policy", "--pol", "ipsec", "--dir", "in",
+                       "-m", "tcpmss", "--mss", mss_range,
+                       "-j", "TCPMSS", "--set-mss", mss])
+
+        iptables_run([ "-t", "mangle",
+                       "-A", "FORWARD",
+                       "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
+                       "-m", "policy", "--pol", "ipsec", "--dir", "out",
+                       "-m", "tcpmss", "--mss", mss_range,
+                       "-j", "TCPMSS", "--set-mss", mss])
 
         ip6tables_run(["-t", "mangle",
                        "-A", "FORWARD",
                        "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
-                       "-s", str(self.__client_subnet_ipv6),
-                       "-m", "policy", "--dir", "in", "--pol", "ipsec",
-                       "-m", "tcpmss", "--mss", "1341:1500",
-                       "-j", "TCPMSS", "--set-mss", "1340"])
+                       "-m", "policy", "--pol", "ipsec", "--dir", "in",
+                       "-m", "tcpmss", "--mss", mss_range,
+                       "-j", "TCPMSS", "--set-mss", mss])
+
+        ip6tables_run(["-t", "mangle",
+                       "-A", "FORWARD",
+                       "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
+                       "-m", "policy", "--pol", "ipsec", "--dir", "out",
+                       "-m", "tcpmss", "--mss", mss_range,
+                       "-j", "TCPMSS", "--set-mss", mss])
 
         # configure masquerading to allow clients to access the internet
         # -------------------------------------------------------------------------------------------------------------

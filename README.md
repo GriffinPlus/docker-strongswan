@@ -254,6 +254,12 @@ Determines whether VPN clients can be accessed from the public internet, i.e. wh
 
 Default Value: `true`
 
+#### TCP_MSS
+
+Determines the MSS (Maximum Segment Size) of TCP packets traveling through the tunnel. This setting modifies SYN packets to enforce smaller packets (MSS Clamping) to avoid fragmentation at IP level which may cause packets to be dropped. The default value is a fail-safe value that should work with all links, but can slow down the connection speed. You should start with it and increase it to optimize the size of packets if everything is working as desired.
+
+Default Value: `1200`
+
 #### STARTUP_VERBOSITY
 
 Determines the verbosity of the *Griffin+ Container Startup System* (see [here](https://github.com/griffinplus/docker-base-supervisor) for details).

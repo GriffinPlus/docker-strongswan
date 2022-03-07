@@ -396,7 +396,11 @@ class VpnCommandProcessor(CommandProcessor):
 
         # create a PKCS12 package containing the private key and the certificate
         # -----------------------------------------------------------------------------------------
-        client_p12 = crypto.PKCS12Type()
+        try:
+            # OpenSSL changed the attribute name since 17.1.0 (see #10)
+            client_p12 = crypto.PKCS12()
+        except AttributeError:
+            client_p12 = crypto.PKCS12Type()
         client_p12.set_ca_certificates([ crypto.X509.from_cryptography(ca.cert) ])
         client_p12.set_privatekey(crypto.load_privatekey(crypto.FILETYPE_PEM, client_key.private_bytes(Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption())))
         client_p12.set_certificate(crypto.X509.from_cryptography(client_cert))
